@@ -11,8 +11,8 @@ import depthai as dai
 
 IMU_SAMPLE_RATE      = 400         # Hz
 BATCH_THRESHOLD      = 20          # campioni per batch (~50ms a 400Hz)
-EARTHQUAKE_THRESHOLD = 0.3 * 9.81  # m/s²  (~0.5g)
-EARTHQUAKE_DURATION  = 0.1         # secondi di vibrazione sostenuta prima di allarmare
+EARTHQUAKE_THRESHOLD = 0.1 * 9.81  # m/s²  (~0.5g)
+EARTHQUAKE_DURATION  = 0.01         # secondi di vibrazione sostenuta prima di allarmare
 
 
 class EarthquakeDetector:

@@ -10,7 +10,13 @@ import numpy as np
 
 from .config import AppConfig
 from .events import EventLogger
-from .models import ComplianceEvent, ComplianceState, ComplianceStatus, FramePacket
+from .models import (
+    ComplianceEvent,
+    ComplianceState,
+    ComplianceStatus,
+    ExitPosition,
+    FramePacket,
+)
 from .occupancy import OccupancyEngine
 from .state_machine import ComplianceStateMachine
 from .tracker import SimpleCentroidTracker
@@ -27,6 +33,7 @@ class ExitClearRuntime:
         config: AppConfig,
         source: Any,
         source_name: str,
+        exit_position: ExitPosition,
         baseline_frames: int,
         append_events: bool,
         status_change_callback: StatusChangeCallback | None = None,
@@ -36,6 +43,7 @@ class ExitClearRuntime:
         self.zone = config.zones[0]
         self.source = source
         self.source_name = source_name
+        self.exit_position = exit_position
         self.baseline_frames = baseline_frames
         self.status_change_callback = status_change_callback
 
@@ -56,19 +64,29 @@ class ExitClearRuntime:
         self._state_machine: ComplianceStateMachine | None = None
         self._latest_status: ComplianceStatus | None = None
         self._latest_scenario: str | None = None
+        self._latest_depth: np.ndarray | None = None
+        self._latest_rgb: np.ndarray | None = None
+        self._latest_occupied_mask: np.ndarray | None = None
+        self._last_event_monotonic: float | None = None
 
     @property
     def event_log_path(self) -> Path:
         return self.event_logger.path
 
-    def calibrate_baseline(self) -> ComplianceStatus:
+    def calibrate_baseline(
+        self, exit_position: ExitPosition | None = None
+    ) -> ComplianceStatus:
         packets = self.source.calibration_frames(self.baseline_frames)
         baseline_depth = np.median(
             np.stack([packet.depth_mm for packet in packets], axis=0), axis=0
         ).astype(np.uint16)
         with self._lock:
+            if exit_position is not None:
+                self.exit_position = exit_position
             self._baseline_depth = baseline_depth
-            self._occupancy_engine = OccupancyEngine(self.zone, baseline_depth.shape)
+            self._occupancy_engine = OccupancyEngine(
+                self.zone, baseline_depth.shape, self.exit_position
+            )
             self._tracker = SimpleCentroidTracker(self._occupancy_engine.geometry)
             self._state_machine = ComplianceStateMachine(self.zone)
             status, _ = self._process_packet_locked(packets[-1])
@@ -82,6 +100,7 @@ class ExitClearRuntime:
             event = None
             if previous_state is not None:
                 event = self.event_logger.emit_state_change(status, previous_state)
+                self._last_event_monotonic = time.monotonic()
             self._latest_scenario = packet.scenario
 
         if event is not None and previous_state is not None:
@@ -95,6 +114,39 @@ class ExitClearRuntime:
     def events(self, limit: int | None = None) -> list[dict[str, Any]]:
         with self._lock:
             return self.event_logger.read_events(limit=limit)
+
+    def preview_jpeg(self) -> bytes | None:
+        with self._lock:
+            if (
+                self._latest_status is None
+                or self._latest_depth is None
+                or self._occupancy_engine is None
+            ):
+                return None
+            depth = self._latest_depth.copy()
+            rgb = None if self._latest_rgb is None else self._latest_rgb.copy()
+            occupied_mask = (
+                None
+                if self._latest_occupied_mask is None
+                else self._latest_occupied_mask.copy()
+            )
+            status = self._latest_status
+            geometry = self._occupancy_engine.geometry
+            event_active = (
+                self._last_event_monotonic is not None
+                and (time.monotonic() - self._last_event_monotonic) <= 2.5
+            )
+
+        from .preview import render_preview_jpeg
+
+        return render_preview_jpeg(
+            depth_mm=depth,
+            rgb=rgb,
+            occupied_mask=occupied_mask,
+            status=status,
+            geometry=geometry,
+            event_active=event_active,
+        )
 
     def health(self) -> dict[str, Any]:
         with self._lock:
@@ -157,6 +209,9 @@ class ExitClearRuntime:
         )
         self._latest_status = status
         self._latest_scenario = packet.scenario
+        self._latest_depth = packet.depth_mm.copy()
+        self._latest_rgb = None if packet.rgb is None else packet.rgb.copy()
+        self._latest_occupied_mask = occupancy.occupied_mask.copy()
         return status, previous_state
 
     def _notify_status_change(

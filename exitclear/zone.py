@@ -6,8 +6,11 @@ from .models import BoundsCameraMm, ZoneConfig
 
 
 class ZoneGeometry:
-    def __init__(self, zone: ZoneConfig, frame_shape: tuple[int, int]) -> None:
+    def __init__(
+        self, zone: ZoneConfig, frame_shape: tuple[int, int], bounds: BoundsCameraMm
+    ) -> None:
         self.zone = zone
+        self.bounds = bounds
         self.height, self.width = frame_shape
         self.x0 = int(round(zone.image_roi.x_min_pct * self.width))
         self.x1 = int(round(zone.image_roi.x_max_pct * self.width))
@@ -23,10 +26,6 @@ class ZoneGeometry:
         mask = np.zeros((self.height, self.width), dtype=bool)
         mask[self.y0 : self.y1, self.x0 : self.x1] = True
         return mask
-
-    @property
-    def bounds(self) -> BoundsCameraMm:
-        return self.zone.bounds_camera_mm
 
     def pixel_to_camera_mm(self, centroid_px: tuple[float, float], z_mm: float) -> list[int]:
         x_px, y_px = centroid_px

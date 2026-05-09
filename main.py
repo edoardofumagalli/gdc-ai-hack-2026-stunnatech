@@ -6,8 +6,15 @@ from pathlib import Path
 
 from fake_source import FakeDepthSource
 from exitclear.config import load_config
-from exitclear.models import ComplianceEvent, ComplianceState, ComplianceStatus
+from exitclear.models import (
+    ComplianceEvent,
+    ComplianceState,
+    ComplianceStatus,
+    ExitPosition,
+)
 from exitclear.runtime import ExitClearRuntime
+
+FAKE_EXIT_POSITION = ExitPosition(x=0.0, y=-300.0, z=3000.0)
 
 
 def parse_args() -> argparse.Namespace:
@@ -30,7 +37,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--oak-width", type=int, default=640)
     parser.add_argument("--oak-height", type=int, default=400)
     parser.add_argument("--oak-fps", type=float, default=5.0)
-    return parser.parse_args()
+    parser.add_argument("--exit-x", type=float, default=None)
+    parser.add_argument("--exit-y", type=float, default=None)
+    parser.add_argument("--exit-z", type=float, default=None)
+    args = parser.parse_args()
+    if args.source == "oak" and (
+        args.exit_x is None or args.exit_y is None or args.exit_z is None
+    ):
+        parser.error("--exit-x, --exit-y and --exit-z are required when --source oak")
+    return args
+
+
+def exit_position_from_args(args: argparse.Namespace) -> ExitPosition:
+    if args.exit_x is None or args.exit_y is None or args.exit_z is None:
+        return FAKE_EXIT_POSITION
+    return ExitPosition(x=args.exit_x, y=args.exit_y, z=args.exit_z)
 
 
 def main() -> None:
@@ -38,6 +59,7 @@ def main() -> None:
     root = Path(__file__).resolve().parent
     config = load_config(root / args.config)
     zone = config.zones[0]
+    exit_position = exit_position_from_args(args)
 
     if args.source == "oak":
         from oak_pipeline import OakDepthSource
@@ -55,6 +77,7 @@ def main() -> None:
         config=config,
         source=source,
         source_name=args.source,
+        exit_position=exit_position,
         baseline_frames=args.baseline_frames,
         append_events=args.append_events,
         status_change_callback=print_status_change,
@@ -63,6 +86,7 @@ def main() -> None:
 
     print(
         f"ExitClear source={args.source} zone={zone.id} "
+        f"exit_position=({exit_position.x:.0f},{exit_position.y:.0f},{exit_position.z:.0f})mm "
         f"baseline_frames={args.baseline_frames} events={runtime.event_log_path}"
     )
     if args.server:

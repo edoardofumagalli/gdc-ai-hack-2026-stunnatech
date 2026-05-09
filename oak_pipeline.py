@@ -45,6 +45,7 @@ class OakDepthSource:
             pass
         self.pipeline = self.dai.Pipeline(self.device)
         self.depth_queue: Any | None = None
+        self.rgb_queue: Any | None = None
         self._build_pipeline()
         self.pipeline.start()
 
@@ -97,6 +98,22 @@ class OakDepthSource:
             maxSize=self.queue_size,
             blocking=True,
         )
+        self._try_build_rgb_preview()
+
+    def _try_build_rgb_preview(self) -> None:
+        try:
+            color = self.pipeline.create(self.dai.node.Camera).build(
+                self.dai.CameraBoardSocket.CAM_A
+            )
+            color_out = color.requestOutput(
+                self.frame_shape,
+                type=self.dai.ImgFrame.Type.RGB888i,
+                fps=self.fps,
+            )
+            self.rgb_queue = color_out.createOutputQueue(maxSize=2, blocking=False)
+        except Exception as exc:
+            self.rgb_queue = None
+            print(f"OAK RGB preview unavailable: {exc}")
 
     def _validate_frame_shape(self) -> None:
         width, height = self.frame_shape
@@ -134,9 +151,27 @@ class OakDepthSource:
             raise RuntimeError("Depth output queue has not been created")
         message = self.depth_queue.get()
         depth_mm = np.asarray(message.getFrame()).astype(np.uint16, copy=False)
+        rgb = self._latest_rgb_frame()
         return FramePacket(
             timestamp=datetime.now().astimezone(),
             depth_mm=depth_mm,
+            rgb=rgb,
             detections=[],
             scenario=scenario,
         )
+
+    def _latest_rgb_frame(self) -> np.ndarray | None:
+        if self.rgb_queue is None:
+            return None
+        latest = None
+        while True:
+            message = self.rgb_queue.tryGet()
+            if message is None:
+                break
+            latest = message
+        if latest is None:
+            return None
+        try:
+            return np.asarray(latest.getCvFrame()).copy()
+        except Exception:
+            return None

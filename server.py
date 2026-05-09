@@ -9,7 +9,7 @@ from exitclear.runtime import ExitClearRuntime
 
 def create_app(runtime: ExitClearRuntime):
     from fastapi import FastAPI, HTTPException, Query
-    from fastapi.responses import StreamingResponse
+    from fastapi.responses import Response, StreamingResponse
 
     app = FastAPI(title="ExitClear Backend", version="0.1.0")
 
@@ -34,6 +34,17 @@ def create_app(runtime: ExitClearRuntime):
         )
     ) -> list[dict[str, Any]]:
         return runtime.events(limit=limit)
+
+    @app.get("/preview.jpg")
+    def preview() -> Response:
+        jpeg = runtime.preview_jpeg()
+        if jpeg is None:
+            raise HTTPException(status_code=503, detail="Preview unavailable")
+        return Response(
+            content=jpeg,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.post("/calibrate/baseline")
     def calibrate_baseline() -> dict[str, Any]:

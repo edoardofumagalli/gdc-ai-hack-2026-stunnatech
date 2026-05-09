@@ -4,14 +4,18 @@ from collections import deque
 
 import numpy as np
 
-from .models import Component, OccupancyResult, ZoneConfig
+from .models import BoundsCameraMm, Component, ExitPosition, OccupancyResult, ZoneConfig
 from .zone import ZoneGeometry
 
 
 class OccupancyEngine:
-    def __init__(self, zone: ZoneConfig, frame_shape: tuple[int, int]) -> None:
+    def __init__(
+        self, zone: ZoneConfig, frame_shape: tuple[int, int], exit_position: ExitPosition
+    ) -> None:
         self.zone = zone
-        self.geometry = ZoneGeometry(zone, frame_shape)
+        self.exit_position = exit_position
+        self.bounds = _bounds_from_exit_position(zone, exit_position)
+        self.geometry = ZoneGeometry(zone, frame_shape, self.bounds)
         self._recent_occupancy_pct: deque[float] = deque(
             maxlen=max(1, zone.occupancy.smoothing_frames)
         )
@@ -22,7 +26,7 @@ class OccupancyEngine:
         if depth_mm.shape != baseline_depth_mm.shape:
             raise ValueError("Depth frame and baseline must have the same shape")
 
-        bounds = self.zone.bounds_camera_mm
+        bounds = self.bounds
         current_depth = depth_mm.astype(np.float32, copy=False)
         baseline_depth = baseline_depth_mm.astype(np.float32, copy=False)
         zone_mask = self.geometry.mask
@@ -100,6 +104,7 @@ class OccupancyEngine:
             occupied_pixel_count=occupied_pixel_count,
             depth_valid_pct=depth_valid_pct,
             baseline_ready=True,
+            occupied_mask=occupied,
             components=components,
             severity=severity,
             reason=reason,
@@ -154,6 +159,22 @@ def _filter_components(
                 )
             )
     return filtered, components
+
+
+def _bounds_from_exit_position(
+    zone: ZoneConfig, exit_position: ExitPosition
+) -> BoundsCameraMm:
+    half_width = zone.required_clear_width_mm / 2.0
+    half_height = zone.monitored_height_mm / 2.0
+    z_min = max(200.0, exit_position.z - zone.monitored_depth_mm)
+    return BoundsCameraMm(
+        x_min=exit_position.x - half_width,
+        x_max=exit_position.x + half_width,
+        y_min=exit_position.y - half_height,
+        y_max=exit_position.y + half_height,
+        z_min=z_min,
+        z_max=exit_position.z,
+    )
 
 
 def _flood_fill(

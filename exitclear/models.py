@@ -32,13 +32,20 @@ class ImageRoi:
 
 
 @dataclass(frozen=True)
+class ExitPosition:
+    x: float
+    y: float
+    z: float
+
+
+@dataclass(frozen=True)
 class BoundsCameraMm:
-    x_min: int
-    x_max: int
-    y_min: int
-    y_max: int
-    z_min: int
-    z_max: int
+    x_min: float
+    x_max: float
+    y_min: float
+    y_max: float
+    z_min: float
+    z_max: float
 
 
 @dataclass(frozen=True)
@@ -58,10 +65,10 @@ class ZoneConfig:
     type: str
     required_clear_width_mm: int
     monitored_height_mm: int
+    monitored_depth_mm: int
     persistence_threshold_s: float
     transient_person_grace_s: float
     image_roi: ImageRoi
-    bounds_camera_mm: BoundsCameraMm
     occupancy: OccupancyConfig
 
 
@@ -91,6 +98,7 @@ class Detection:
 class FramePacket:
     timestamp: datetime
     depth_mm: np.ndarray
+    rgb: Optional[np.ndarray] = None
     detections: list[Detection] = field(default_factory=list)
     scenario: str = ""
 
@@ -140,6 +148,7 @@ class OccupancyResult:
     occupied_pixel_count: int
     depth_valid_pct: float
     baseline_ready: bool
+    occupied_mask: np.ndarray = field(repr=False, compare=False)
     components: list[Component]
     severity: float
     reason: str

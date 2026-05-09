@@ -5,7 +5,6 @@ from typing import Any
 
 from .models import (
     AppConfig,
-    BoundsCameraMm,
     DeviceConfig,
     ImageRoi,
     OccupancyConfig,
@@ -25,10 +24,10 @@ def load_config(path: str | Path) -> AppConfig:
                 type=item["type"],
                 required_clear_width_mm=int(item["required_clear_width_mm"]),
                 monitored_height_mm=int(item["monitored_height_mm"]),
+                monitored_depth_mm=int(item["monitored_depth_mm"]),
                 persistence_threshold_s=float(item["persistence_threshold_s"]),
                 transient_person_grace_s=float(item["transient_person_grace_s"]),
                 image_roi=ImageRoi(**item["image_roi"]),
-                bounds_camera_mm=BoundsCameraMm(**item["bounds_camera_mm"]),
                 occupancy=OccupancyConfig(**item["occupancy"]),
             )
         )

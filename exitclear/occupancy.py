@@ -5,17 +5,23 @@ from collections import deque
 import numpy as np
 
 from .models import BoundsCameraMm, Component, ExitPosition, OccupancyResult, ZoneConfig
-from .zone import ZoneGeometry
 
 
 class OccupancyEngine:
     def __init__(
-        self, zone: ZoneConfig, frame_shape: tuple[int, int], exit_position: ExitPosition
+        self,
+        zone: ZoneConfig,
+        frame_shape: tuple[int, int],
+        exit_position: ExitPosition,
+        fx: float,
+        fy: float,
     ) -> None:
         self.zone = zone
+        self.frame_shape = frame_shape
         self.exit_position = exit_position
+        self.fx = fx
+        self.fy = fy
         self.bounds = _bounds_from_exit_position(zone, exit_position)
-        self.geometry = ZoneGeometry(zone, frame_shape, self.bounds)
         self._recent_occupancy_pct: deque[float] = deque(
             maxlen=max(1, zone.occupancy.smoothing_frames)
         )
@@ -29,18 +35,15 @@ class OccupancyEngine:
         bounds = self.bounds
         current_depth = depth_mm.astype(np.float32, copy=False)
         baseline_depth = baseline_depth_mm.astype(np.float32, copy=False)
-        zone_mask = self.geometry.mask
-        zone_pixel_count = int(zone_mask.sum())
+        zone_pixel_count = int(depth_mm.size)
 
         current_valid = (
-            zone_mask
-            & np.isfinite(current_depth)
+            np.isfinite(current_depth)
             & (current_depth > bounds.z_min)
             & (current_depth < bounds.z_max)
         )
         baseline_valid = (
-            zone_mask
-            & np.isfinite(baseline_depth)
+            np.isfinite(baseline_depth)
             & (baseline_depth > bounds.z_min)
             & (baseline_depth < bounds.z_max)
         )
@@ -56,7 +59,9 @@ class OccupancyEngine:
         occupied, components = _filter_components(
             occupied_raw,
             current_depth,
-            min_area_px=self.zone.occupancy.min_component_area_px,
+            fx=self.fx,
+            fy=self.fy,
+            min_area_mm2=self.zone.occupancy.min_component_area_mm2,
         )
 
         valid_pixel_count = int(valid.sum())
@@ -112,18 +117,14 @@ class OccupancyEngine:
 
     def _lateral_occupancy_bins(self, occupied: np.ndarray) -> tuple[list[bool], int]:
         bins = max(1, self.zone.occupancy.lateral_bins)
-        roi = occupied[
-            self.geometry.y0 : self.geometry.y1,
-            self.geometry.x0 : self.geometry.x1,
-        ]
-        if roi.size == 0:
+        if occupied.size == 0:
             return [False] * bins, bins
 
-        bin_edges = np.linspace(0, roi.shape[1], bins + 1, dtype=int)
+        bin_edges = np.linspace(0, occupied.shape[1], bins + 1, dtype=int)
         occupied_bins = []
         for idx in range(bins):
             x0, x1 = bin_edges[idx], bin_edges[idx + 1]
-            cell = roi[:, x0:x1]
+            cell = occupied[:, x0:x1]
             if cell.size == 0:
                 occupied_bins.append(False)
                 continue
@@ -133,7 +134,11 @@ class OccupancyEngine:
 
 
 def _filter_components(
-    occupied: np.ndarray, depth_mm: np.ndarray, min_area_px: int
+    occupied: np.ndarray,
+    depth_mm: np.ndarray,
+    fx: float,
+    fy: float,
+    min_area_mm2: float,
 ) -> tuple[np.ndarray, list[Component]]:
     filtered = np.zeros_like(occupied, dtype=bool)
     visited = np.zeros_like(occupied, dtype=bool)
@@ -145,15 +150,17 @@ def _filter_components(
             if not occupied[y, x] or visited[y, x]:
                 continue
             pixels = _flood_fill(occupied, visited, x, y)
-            if len(pixels) < min_area_px:
-                continue
             ys = np.array([item[0] for item in pixels], dtype=np.int32)
             xs = np.array([item[1] for item in pixels], dtype=np.int32)
+            depths = depth_mm[ys, xs].astype(np.float32, copy=False)
+            area_mm2 = float(np.sum((depths * depths) / max(1e-6, fx * fy)))
+            if area_mm2 < min_area_mm2:
+                continue
             filtered[ys, xs] = True
-            depths = depth_mm[ys, xs]
             components.append(
                 Component(
                     area_px=len(pixels),
+                    area_mm2=area_mm2,
                     centroid_px=(float(xs.mean()), float(ys.mean())),
                     median_depth_mm=float(np.median(depths)),
                 )

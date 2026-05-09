@@ -68,6 +68,8 @@ class ExitClearRuntime:
         self._latest_rgb: np.ndarray | None = None
         self._latest_occupied_mask: np.ndarray | None = None
         self._last_event_monotonic: float | None = None
+        self._fx: float | None = None
+        self._fy: float | None = None
 
     @property
     def event_log_path(self) -> Path:
@@ -83,11 +85,18 @@ class ExitClearRuntime:
         with self._lock:
             if exit_position is not None:
                 self.exit_position = exit_position
+            self._fx, self._fy = self._camera_intrinsics(baseline_depth.shape)
             self._baseline_depth = baseline_depth
             self._occupancy_engine = OccupancyEngine(
-                self.zone, baseline_depth.shape, self.exit_position
+                self.zone,
+                baseline_depth.shape,
+                self.exit_position,
+                fx=self._fx,
+                fy=self._fy,
             )
-            self._tracker = SimpleCentroidTracker(self._occupancy_engine.geometry)
+            self._tracker = SimpleCentroidTracker(
+                baseline_depth.shape, fx=self._fx, fy=self._fy
+            )
             self._state_machine = ComplianceStateMachine(self.zone)
             status, _ = self._process_packet_locked(packets[-1])
             return status
@@ -131,7 +140,7 @@ class ExitClearRuntime:
                 else self._latest_occupied_mask.copy()
             )
             status = self._latest_status
-            geometry = self._occupancy_engine.geometry
+            bounds = self._occupancy_engine.bounds
             event_active = (
                 self._last_event_monotonic is not None
                 and (time.monotonic() - self._last_event_monotonic) <= 2.5
@@ -144,7 +153,7 @@ class ExitClearRuntime:
             rgb=rgb,
             occupied_mask=occupied_mask,
             status=status,
-            geometry=geometry,
+            bounds=bounds,
             event_active=event_active,
         )
 
@@ -213,6 +222,24 @@ class ExitClearRuntime:
         self._latest_rgb = None if packet.rgb is None else packet.rgb.copy()
         self._latest_occupied_mask = occupancy.occupied_mask.copy()
         return status, previous_state
+
+    def _camera_intrinsics(self, frame_shape: tuple[int, int]) -> tuple[float, float]:
+        device = getattr(self.source, "device", None)
+        dai = getattr(self.source, "dai", None)
+        if device is not None and dai is not None:
+            try:
+                height, width = frame_shape
+                calib = device.readCalibration()
+                intrinsics = calib.getCameraIntrinsics(
+                    dai.CameraBoardSocket.CAM_B, width, height
+                )
+                return float(intrinsics[0][0]), float(intrinsics[1][1])
+            except Exception:
+                pass
+
+        fx = getattr(self.source, "fx", None) or self.zone.occupancy.fx or 500.0
+        fy = getattr(self.source, "fy", None) or self.zone.occupancy.fy or 500.0
+        return float(fx), float(fy)
 
     def _notify_status_change(
         self,

@@ -14,7 +14,7 @@ from exitclear.models import (
 )
 from exitclear.runtime import ExitClearRuntime
 
-FAKE_EXIT_POSITION = ExitPosition(x=0.0, y=-300.0, z=3000.0)
+FAKE_EXIT_POSITION = ExitPosition(x=0.0, y=-300.0, z=2300.0)
 
 
 def parse_args() -> argparse.Namespace:

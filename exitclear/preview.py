@@ -4,8 +4,7 @@ from typing import Any
 
 import numpy as np
 
-from .models import ComplianceStatus
-from .zone import ZoneGeometry
+from .models import BoundsCameraMm, ComplianceStatus
 
 
 def render_preview_jpeg(
@@ -13,7 +12,7 @@ def render_preview_jpeg(
     rgb: np.ndarray | None,
     occupied_mask: np.ndarray | None,
     status: ComplianceStatus,
-    geometry: ZoneGeometry,
+    bounds: BoundsCameraMm,
     event_active: bool,
 ) -> bytes | None:
     try:
@@ -23,12 +22,12 @@ def render_preview_jpeg(
 
     frame = _rgb_preview(rgb, cv2) if rgb is not None else None
     if frame is None:
-        frame = _depth_preview(depth_mm, geometry, cv2)
+        frame = _depth_preview(depth_mm, bounds, cv2)
 
     if occupied_mask is not None and occupied_mask.shape[:2] == frame.shape[:2]:
         frame = _overlay_occupied(frame, occupied_mask, cv2)
 
-    _draw_hud(frame, status, geometry, event_active, cv2)
+    _draw_hud(frame, status, event_active, cv2)
     ok, encoded = cv2.imencode(
         ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85]
     )
@@ -44,9 +43,8 @@ def _rgb_preview(rgb: np.ndarray, cv2: Any) -> np.ndarray | None:
     return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
 
-def _depth_preview(depth_mm: np.ndarray, geometry: ZoneGeometry, cv2: Any) -> np.ndarray:
+def _depth_preview(depth_mm: np.ndarray, bounds: BoundsCameraMm, cv2: Any) -> np.ndarray:
     depth = depth_mm.astype(np.float32, copy=False)
-    bounds = geometry.bounds
     valid = np.isfinite(depth) & (depth > bounds.z_min) & (depth < bounds.z_max)
     normalized = np.zeros(depth.shape, dtype=np.uint8)
     if valid.any():
@@ -68,15 +66,14 @@ def _overlay_occupied(frame: np.ndarray, occupied_mask: np.ndarray, cv2: Any) ->
 def _draw_hud(
     frame: np.ndarray,
     status: ComplianceStatus,
-    geometry: ZoneGeometry,
     event_active: bool,
     cv2: Any,
 ) -> None:
     color = _state_color(status.state.value)
     cv2.rectangle(
         frame,
-        (geometry.x0, geometry.y0),
-        (geometry.x1 - 1, geometry.y1 - 1),
+        (0, 0),
+        (frame.shape[1] - 1, frame.shape[0] - 1),
         color,
         2,
     )

@@ -12,17 +12,12 @@ zones:
     monitored_depth_mm: 1000
     persistence_threshold_s: 3.0
     transient_person_grace_s: 2.5
-    image_roi:
-      x_min_pct: 0.25
-      x_max_pct: 0.75
-      y_min_pct: 0.20
-      y_max_pct: 0.95
     occupancy:
       depth_delta_mm: 120
       min_occupied_pct_watch: 5
       min_occupied_pct_violation: 15
       smoothing_frames: 7
-      min_component_area_px: 80
+      min_component_area_mm2: 50000.0
       lateral_bins: 24
 
 outputs:

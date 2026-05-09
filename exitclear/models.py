@@ -24,14 +24,6 @@ class DeviceConfig:
 
 
 @dataclass(frozen=True)
-class ImageRoi:
-    x_min_pct: float
-    x_max_pct: float
-    y_min_pct: float
-    y_max_pct: float
-
-
-@dataclass(frozen=True)
 class ExitPosition:
     x: float
     y: float
@@ -54,8 +46,10 @@ class OccupancyConfig:
     min_occupied_pct_watch: float
     min_occupied_pct_violation: float
     smoothing_frames: int
-    min_component_area_px: int
+    min_component_area_mm2: float
     lateral_bins: int
+    fx: float | None = None
+    fy: float | None = None
 
 
 @dataclass(frozen=True)
@@ -68,7 +62,6 @@ class ZoneConfig:
     monitored_depth_mm: int
     persistence_threshold_s: float
     transient_person_grace_s: float
-    image_roi: ImageRoi
     occupancy: OccupancyConfig
 
 
@@ -106,6 +99,7 @@ class FramePacket:
 @dataclass
 class Component:
     area_px: int
+    area_mm2: float
     centroid_px: tuple[float, float]
     median_depth_mm: float
 

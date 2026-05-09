@@ -6,7 +6,6 @@ from typing import Any
 from .models import (
     AppConfig,
     DeviceConfig,
-    ImageRoi,
     OccupancyConfig,
     OutputsConfig,
     ZoneConfig,
@@ -27,7 +26,6 @@ def load_config(path: str | Path) -> AppConfig:
                 monitored_depth_mm=int(item["monitored_depth_mm"]),
                 persistence_threshold_s=float(item["persistence_threshold_s"]),
                 transient_person_grace_s=float(item["transient_person_grace_s"]),
-                image_roi=ImageRoi(**item["image_roi"]),
                 occupancy=OccupancyConfig(**item["occupancy"]),
             )
         )

@@ -25,6 +25,8 @@ class FakeDepthSource:
     ) -> None:
         self.frame_shape = frame_shape
         self.fps = fps
+        self.fx = 500.0
+        self.fy = 500.0
         self.baseline_depth_mm = baseline_depth_mm
         self._start = start_time or datetime(
             2026, 5, 9, 11, 42, 0, tzinfo=timezone(timedelta(hours=2))
@@ -60,7 +62,7 @@ class FakeDepthSource:
         if scenario == "object_outside_zone":
             depth[72:102, 8:28] = 1450
         elif scenario in {"object_inside_zone", "object_persists", "violation"}:
-            depth[48:104, 62:100] = 1450
+            depth[20:100, 40:120] = 1450
 
         timestamp = self._start + timedelta(seconds=self._index / self.fps)
         self._index += 1

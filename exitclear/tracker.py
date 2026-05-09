@@ -5,7 +5,6 @@ from datetime import datetime
 from math import dist
 
 from .models import Component, ObstacleTrack
-from .zone import ZoneGeometry
 
 
 @dataclass
@@ -18,8 +17,16 @@ class _Track:
 
 
 class SimpleCentroidTracker:
-    def __init__(self, geometry: ZoneGeometry, max_match_distance_px: float = 35.0) -> None:
-        self.geometry = geometry
+    def __init__(
+        self,
+        frame_shape: tuple[int, int],
+        fx: float,
+        fy: float,
+        max_match_distance_px: float = 35.0,
+    ) -> None:
+        self.height, self.width = frame_shape
+        self.fx = fx
+        self.fy = fy
         self.max_match_distance_px = max_match_distance_px
         self._next_id = 1
         self._tracks: dict[int, _Track] = {}
@@ -31,7 +38,7 @@ class SimpleCentroidTracker:
         obstacles: list[ObstacleTrack] = []
 
         for component in sorted(components, key=lambda item: item.area_px, reverse=True):
-            xyz = self.geometry.pixel_to_camera_mm(
+            xyz = self._pixel_to_camera_mm(
                 component.centroid_px, component.median_depth_mm
             )
             track = self._match(component.centroid_px, unmatched)
@@ -69,6 +76,14 @@ class SimpleCentroidTracker:
                 del self._tracks[track_id]
 
         return obstacles
+
+    def _pixel_to_camera_mm(self, centroid_px: tuple[float, float], z_mm: float) -> list[int]:
+        x_px, y_px = centroid_px
+        cx = (self.width - 1) / 2.0
+        cy = (self.height - 1) / 2.0
+        x_mm = (x_px - cx) * z_mm / max(1e-6, self.fx)
+        y_mm = (y_px - cy) * z_mm / max(1e-6, self.fy)
+        return [int(round(x_mm)), int(round(y_mm)), int(round(z_mm))]
 
     def _match(
         self, centroid_px: tuple[float, float], candidates: set[int]

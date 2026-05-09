@@ -39,6 +39,7 @@ class OakDepthSource:
         self._validate_frame_shape()
 
         self.device = self._open_device()
+        self.fx, self.fy = self._read_camera_intrinsics()
         try:
             self.device.setIrLaserDotProjectorIntensity(1.0)
         except Exception:
@@ -124,6 +125,21 @@ class OakDepthSource:
             )
         if width <= 0 or height <= 0:
             raise ValueError(f"Invalid OAK frame shape: {self.frame_shape}")
+
+    def _read_camera_intrinsics(self) -> tuple[float, float]:
+        width, height = self.frame_shape
+        try:
+            calib = self.device.readCalibration()
+            intrinsics = calib.getCameraIntrinsics(
+                self.dai.CameraBoardSocket.CAM_B, width, height
+            )
+        except Exception:
+            try:
+                calib = self.device.readCalibration()
+                intrinsics = calib.getCameraIntrinsics(self.dai.CameraBoardSocket.CAM_B)
+            except Exception:
+                return 500.0, 500.0
+        return float(intrinsics[0][0]), float(intrinsics[1][1])
 
     def _stereo_sockets(self):
         fallback = (

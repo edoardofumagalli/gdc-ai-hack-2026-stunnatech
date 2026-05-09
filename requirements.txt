@@ -1,6 +1,4 @@
-numpy>=1.26
-PyYAML>=6.0
-fastapi>=0.115
-uvicorn[standard]>=0.30
-depthai==3.4.0
-opencv-python-headless~=4.10.0
+depthai
+numpy
+opencv-python
+PyYAML

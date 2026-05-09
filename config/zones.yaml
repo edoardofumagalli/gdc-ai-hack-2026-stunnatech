@@ -1,0 +1,38 @@
+device:
+  id: oak4d-exitclear-01
+  mode: development
+  privacy_mode_default: true
+
+zones:
+  - id: exit_path_main
+    label: Main Exit Path
+    type: emergency_exit
+    required_clear_width_mm: 900
+    monitored_height_mm: 2000
+    persistence_threshold_s: 3.0
+    transient_person_grace_s: 2.5
+    image_roi:
+      x_min_pct: 0.25
+      x_max_pct: 0.75
+      y_min_pct: 0.20
+      y_max_pct: 0.95
+    bounds_camera_mm:
+      x_min: -600
+      x_max: 600
+      y_min: -1200
+      y_max: 600
+      z_min: 700
+      z_max: 3000
+    occupancy:
+      depth_delta_mm: 120
+      min_occupied_pct_watch: 5
+      min_occupied_pct_violation: 15
+      smoothing_frames: 7
+      min_component_area_px: 80
+      lateral_bins: 24
+
+outputs:
+  event_log_path: data/events.jsonl
+  emit_json: true
+  preview_enabled: true
+  preview_fps: 8

@@ -13,6 +13,8 @@ class FramePacket:
     rgb_frame: np.ndarray | None
     depth_frame: np.ndarray
     intrinsics: np.ndarray
+    earthquake_triggered: bool = False
+    earthquake_vibration_mps2: float | None = None
 
 
 class DepthSource(Protocol):

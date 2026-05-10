@@ -10,6 +10,8 @@ from .config import SignDetectionConfig
 from .depthai_helpers import configure_stereo, stereo_preset
 from .volume import SpatialPoint
 
+ANCHOR_SAMPLE_COUNT = 10
+
 
 class DetectionStore:
     def __init__(self) -> None:
@@ -91,7 +93,21 @@ def run_sign_detection(
 
         rgb_queue = detection_network.passthrough.createOutputQueue()
         detections_queue = detection_network.out.createOutputQueue()
-        depth_queue = stereo.depth.createOutputQueue()
+
+        if platform == dai.Platform.RVC4:
+            align = pipeline.create(dai.node.ImageAlign)
+            stereo.depth.link(align.input)
+            detection_network.passthrough.link(align.inputAlignTo)
+            depth_out = align.outputAligned
+        else:
+            stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
+            try:
+                stereo.setOutputSize(config.stereo_width, config.stereo_height)
+            except AttributeError:
+                pass
+            depth_out = stereo.depth
+
+        depth_queue = depth_out.createOutputQueue()
 
         pipeline.start()
 
@@ -116,6 +132,7 @@ def run_sign_detection(
         should_stop = False
         selected: tuple[str, SpatialPoint] | None = None
         seen_labels: set[str] = set()
+        anchor_samples: list[tuple[str, SpatialPoint]] = []
 
         def frame_norm(display_frame, bbox):
             norm_vals = np.full(len(bbox), display_frame.shape[0])
@@ -186,7 +203,7 @@ def run_sign_detection(
                 if depth_frame is not None:
                     depth_h, depth_w = depth_frame.shape[:2]
                     intrinsics = get_intrinsics(
-                        dai.CameraBoardSocket.CAM_B, depth_w, depth_h
+                        dai.CameraBoardSocket.CAM_A, depth_w, depth_h
                     )
 
                     for det in detections:
@@ -219,12 +236,24 @@ def run_sign_detection(
                         if point is None:
                             continue
                         if config.target_label and label == config.target_label:
-                            selected = label, point
-                            should_stop = True
+                            anchor_samples.append((label, point))
+                            print(
+                                f"Anchor samples: {len(anchor_samples)} / "
+                                f"{ANCHOR_SAMPLE_COUNT}"
+                            )
+                            if len(anchor_samples) >= ANCHOR_SAMPLE_COUNT:
+                                selected = _median_anchor(anchor_samples)
+                                should_stop = True
                             break
                         if not config.target_label and selected is None:
-                            selected = label, point
-                            should_stop = True
+                            anchor_samples.append((label, point))
+                            print(
+                                f"Anchor samples: {len(anchor_samples)} / "
+                                f"{ANCHOR_SAMPLE_COUNT}"
+                            )
+                            if len(anchor_samples) >= ANCHOR_SAMPLE_COUNT:
+                                selected = _median_anchor(anchor_samples)
+                                should_stop = True
                             break
 
                     now = time.monotonic()
@@ -269,6 +298,21 @@ def run_sign_detection(
     if first is None:
         raise RuntimeError("No valid sign detection was acquired.")
     return first
+
+
+def _median_anchor(samples: list[tuple[str, SpatialPoint]]) -> tuple[str, SpatialPoint]:
+    labels = [label for label, _ in samples]
+    label = max(set(labels), key=labels.count)
+    points = np.array(
+        [
+            [point.x_mm, point.y_mm, point.z_mm]
+            for sample_label, point in samples
+            if sample_label == label
+        ],
+        dtype=np.float32,
+    )
+    x_mm, y_mm, z_mm = np.median(points, axis=0)
+    return label, SpatialPoint(float(x_mm), float(y_mm), float(z_mm))
 
 
 def calc_spatial_coords(

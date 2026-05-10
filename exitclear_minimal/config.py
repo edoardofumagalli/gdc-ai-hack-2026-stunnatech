@@ -14,6 +14,11 @@ DEFAULT_DEPTH_LOWER_MM = 100
 DEFAULT_DEPTH_UPPER_MM = 10000
 DEFAULT_CONFIDENCE_THRESHOLD = 0.5
 DEFAULT_MIN_VALID_DEPTH_MM = 100
+DEFAULT_EARTHQUAKE_ENABLED = False
+DEFAULT_EARTHQUAKE_SAMPLE_RATE_HZ = 400
+DEFAULT_EARTHQUAKE_BATCH_THRESHOLD = 20
+DEFAULT_EARTHQUAKE_THRESHOLD_MPS2 = 0.98
+DEFAULT_EARTHQUAKE_MIN_DURATION_S = 0.05
 
 
 @dataclass(frozen=True)
@@ -103,11 +108,34 @@ class OutputConfig:
 
 
 @dataclass(frozen=True)
+class DashboardRoomConfig:
+    name: str
+    device_id: str
+    capacity: int
+
+
+@dataclass(frozen=True)
+class DashboardConfig:
+    room: DashboardRoomConfig
+
+
+@dataclass(frozen=True)
+class EarthquakeConfig:
+    enabled: bool
+    sample_rate_hz: int
+    batch_threshold: int
+    threshold_mps2: float
+    min_duration_s: float
+
+
+@dataclass(frozen=True)
 class AppConfig:
     device: DeviceConfig
     sign_detection: SignDetectionConfig
     monitoring: MonitoringConfig
     output: OutputConfig
+    dashboard: DashboardConfig
+    earthquake: EarthquakeConfig
 
 
 def load_config(path: str | Path) -> AppConfig:
@@ -119,6 +147,9 @@ def load_config(path: str | Path) -> AppConfig:
     volume = monitoring.get("volume_mm", {})
     monitoring_frame_size = monitoring.get("frame_size", DEFAULT_FRAME_SIZE)
     output = raw.get("output", {})
+    dashboard = raw.get("dashboard", {})
+    dashboard_room = dashboard.get("room", {})
+    earthquake = raw.get("earthquake", {})
     stereo_size = sign_detection.get("stereo_size", DEFAULT_FRAME_SIZE)
 
     config = AppConfig(
@@ -177,6 +208,36 @@ def load_config(path: str | Path) -> AppConfig:
             events_path=str(output.get("events_path", "events.jsonl")),
             live_view=bool(output.get("live_view", True)),
             show_occupied_mask=bool(output.get("show_occupied_mask", True)),
+        ),
+        dashboard=DashboardConfig(
+            room=DashboardRoomConfig(
+                name=str(dashboard_room.get("name", "Aula 4")),
+                device_id=str(dashboard_room.get("device_id", "OAK-4D")),
+                capacity=int(dashboard_room.get("capacity", 100)),
+            )
+        ),
+        earthquake=EarthquakeConfig(
+            enabled=bool(earthquake.get("enabled", DEFAULT_EARTHQUAKE_ENABLED)),
+            sample_rate_hz=int(
+                earthquake.get(
+                    "sample_rate_hz", DEFAULT_EARTHQUAKE_SAMPLE_RATE_HZ
+                )
+            ),
+            batch_threshold=int(
+                earthquake.get(
+                    "batch_threshold", DEFAULT_EARTHQUAKE_BATCH_THRESHOLD
+                )
+            ),
+            threshold_mps2=float(
+                earthquake.get(
+                    "threshold_mps2", DEFAULT_EARTHQUAKE_THRESHOLD_MPS2
+                )
+            ),
+            min_duration_s=float(
+                earthquake.get(
+                    "min_duration_s", DEFAULT_EARTHQUAKE_MIN_DURATION_S
+                )
+            ),
         ),
     )
     validate_config(config)
@@ -247,6 +308,24 @@ def validate_config(config: AppConfig) -> None:
 
     if not config.output.events_path.strip():
         raise ValueError("output.events_path must not be empty")
+
+    room = config.dashboard.room
+    if not room.name.strip():
+        raise ValueError("dashboard.room.name must not be empty")
+    if not room.device_id.strip():
+        raise ValueError("dashboard.room.device_id must not be empty")
+    if room.capacity <= 0:
+        raise ValueError("dashboard.room.capacity must be positive")
+
+    earthquake = config.earthquake
+    if earthquake.sample_rate_hz <= 0:
+        raise ValueError("earthquake.sample_rate_hz must be positive")
+    if earthquake.batch_threshold <= 0:
+        raise ValueError("earthquake.batch_threshold must be positive")
+    if earthquake.threshold_mps2 <= 0.0:
+        raise ValueError("earthquake.threshold_mps2 must be positive")
+    if earthquake.min_duration_s < 0.0:
+        raise ValueError("earthquake.min_duration_s must be non-negative")
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from .config import AppConfig, RoiPx
+from .config import AppConfig
 from .depth_source import FramePacket
 from .state_machine import State
 
@@ -14,7 +14,6 @@ class LivePreview:
         self.enabled = config.output.live_view
         self.show_mask = config.output.show_occupied_mask
         self.window_name = "ExitClear Minimal"
-        self.mask_window_name = "ExitClear Occupied Mask"
 
     def show(
         self,
@@ -23,7 +22,9 @@ class LivePreview:
         occupancy_pct: float = 0.0,
         persistence_s: float = 0.0,
         occupied_mask: np.ndarray | None = None,
-        roi_px: RoiPx | None = None,
+        volume_corners_px: list[tuple[int, int] | None] | None = None,
+        anchor_px: tuple[int, int] | None = None,
+        volume_center_px: tuple[int, int] | None = None,
         anchor_label: str | None = None,
         baseline_progress: int | None = None,
         baseline_total: int | None = None,
@@ -33,20 +34,23 @@ class LivePreview:
 
         frame = self._display_frame(packet)
         depth_shape = packet.depth_frame.shape[:2]
-        roi = (
-            self._scale_roi(roi_px, depth_shape, frame.shape[:2])
-            if roi_px is not None and roi_px.x_max > roi_px.x_min
-            else None
+        if self.show_mask:
+            self._draw_occupied_mask_overlay(frame, occupied_mask)
+        self._draw_volume_cuboid(frame, volume_corners_px, depth_shape)
+        self._draw_debug_point(
+            frame,
+            anchor_px,
+            depth_shape,
+            label="anchor",
+            color=(255, 0, 255),
         )
-
-        if roi is not None:
-            cv2.rectangle(
-                frame,
-                (roi.x_min, roi.y_min),
-                (roi.x_max, roi.y_max),
-                (0, 220, 255),
-                2,
-            )
+        self._draw_debug_point(
+            frame,
+            volume_center_px,
+            depth_shape,
+            label="volume center",
+            color=(255, 255, 0),
+        )
         self._draw_overlay(
             frame=frame,
             state=state,
@@ -58,8 +62,6 @@ class LivePreview:
         )
 
         cv2.imshow(self.window_name, frame)
-        if self.show_mask:
-            self._show_mask(packet.depth_frame.shape[:2], occupied_mask, roi_px)
 
         key = cv2.waitKey(1) & 0xFF
         return key != ord("q")
@@ -88,6 +90,150 @@ class LivePreview:
             normalized = (255 - normalized * 255).astype(np.uint8)
         return cv2.applyColorMap(normalized, cv2.COLORMAP_TURBO)
 
+    def _draw_occupied_mask_overlay(
+        self,
+        frame: np.ndarray,
+        occupied_mask: np.ndarray | None,
+    ) -> None:
+        if occupied_mask is None:
+            return
+
+        mask = occupied_mask.astype(np.uint8, copy=False)
+        display_h, display_w = frame.shape[:2]
+        if mask.shape[:2] != (display_h, display_w):
+            mask = cv2.resize(
+                mask,
+                (display_w, display_h),
+                interpolation=cv2.INTER_NEAREST,
+            )
+
+        occupied = mask.astype(bool)
+        if not occupied.any():
+            return
+
+        overlay = frame.copy()
+        overlay[occupied] = (0, 0, 255)
+        cv2.addWeighted(overlay, 0.35, frame, 0.65, 0, frame)
+
+        contour_mask = (occupied.astype(np.uint8) * 255)
+        contours, _ = cv2.findContours(
+            contour_mask,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE,
+        )
+        cv2.drawContours(frame, contours, -1, (0, 0, 255), 1, cv2.LINE_AA)
+
+    def _draw_volume_cuboid(
+        self,
+        frame: np.ndarray,
+        corners: list[tuple[int, int] | None] | None,
+        depth_shape: tuple[int, int],
+    ) -> None:
+        if (
+            corners is None
+            or len(corners) != 8
+            or any(point is None for point in corners)
+        ):
+            return
+
+        points = [
+            self._scale_point(point, depth_shape, frame.shape[:2])
+            for point in corners
+        ]
+
+        # Corner order from MonitoredVolume.corners():
+        # 0..3 = near face, toward the camera (z_min)
+        # 4..7 = far face, on the sign/door side (z_max)
+        near_face = [points[index] for index in (0, 1, 3, 2)]
+        far_face = [points[index] for index in (4, 5, 7, 6)]
+
+        self._fill_poly(frame, far_face, color=(80, 220, 80), alpha=0.14)
+        self._fill_poly(frame, near_face, color=(0, 150, 255), alpha=0.18)
+
+        far_edges = ((4, 5), (5, 7), (7, 6), (6, 4))
+        near_edges = ((0, 1), (1, 3), (3, 2), (2, 0))
+        depth_edges = ((0, 4), (1, 5), (2, 6), (3, 7))
+
+        for start, end in depth_edges:
+            cv2.line(frame, points[start], points[end], (0, 255, 255), 2, cv2.LINE_AA)
+        for start, end in far_edges:
+            cv2.line(frame, points[start], points[end], (80, 220, 80), 2, cv2.LINE_AA)
+        for start, end in near_edges:
+            cv2.line(frame, points[start], points[end], (0, 150, 255), 3, cv2.LINE_AA)
+
+        far_center = _mean_point(far_face)
+        near_center = _mean_point(near_face)
+        cv2.arrowedLine(
+            frame,
+            far_center,
+            near_center,
+            (0, 255, 255),
+            2,
+            cv2.LINE_AA,
+            tipLength=0.12,
+        )
+
+        cv2.putText(
+            frame,
+            "sign plane",
+            (far_center[0] + 8, far_center[1] - 8),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (80, 220, 80),
+            1,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            "toward camera",
+            (near_center[0] + 8, near_center[1] + 18),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
+        for point in points:
+            cv2.circle(frame, point, 4, (0, 255, 255), -1, cv2.LINE_AA)
+
+    def _draw_debug_point(
+        self,
+        frame: np.ndarray,
+        point: tuple[int, int] | None,
+        depth_shape: tuple[int, int],
+        label: str,
+        color: tuple[int, int, int],
+    ) -> None:
+        if point is None:
+            return
+
+        depth_h, depth_w = depth_shape
+        display_h, display_w = frame.shape[:2]
+        sx = display_w / max(1, depth_w)
+        sy = display_h / max(1, depth_h)
+        x = int(round(point[0] * sx))
+        y = int(round(point[1] * sy))
+
+        cv2.drawMarker(
+            frame,
+            (x, y),
+            color,
+            markerType=cv2.MARKER_CROSS,
+            markerSize=24,
+            thickness=2,
+        )
+        cv2.putText(
+            frame,
+            label,
+            (x + 8, y - 8),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            color,
+            1,
+            cv2.LINE_AA,
+        )
+
     def _draw_overlay(
         self,
         frame: np.ndarray,
@@ -110,57 +256,73 @@ class LivePreview:
             lines.append(f"Calibrating baseline: {baseline_progress} / {baseline_total}")
         lines.append("Press q to quit")
 
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.6
+        thickness = 1
+        padding = 10
+        line_gap = 8
+        sizes = [
+            cv2.getTextSize(line, font, font_scale, thickness)[0]
+            for line in lines
+        ]
+        text_width = max(width for width, _ in sizes)
+        line_height = max(height for _, height in sizes)
+        box_width = min(frame.shape[1], text_width + padding * 2)
+        box_height = (
+            padding * 2
+            + len(lines) * line_height
+            + (len(lines) - 1) * line_gap
+        )
+        x0 = 8
+        y0 = max(8, frame.shape[0] - box_height - 8)
+        x1 = min(frame.shape[1] - 1, x0 + box_width)
+        y1 = min(frame.shape[0] - 1, y0 + box_height)
+
         overlay = frame.copy()
-        height = 28 + 24 * len(lines)
-        cv2.rectangle(overlay, (0, 0), (frame.shape[1], height), (0, 0, 0), -1)
+        cv2.rectangle(overlay, (x0, y0), (x1, y1), (0, 0, 0), -1)
         cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
 
         for index, line in enumerate(lines):
             cv2.putText(
                 frame,
                 line,
-                (12, 28 + index * 24),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
+                (
+                    x0 + padding,
+                    y0 + padding + line_height + index * (line_height + line_gap),
+                ),
+                font,
+                font_scale,
                 (255, 255, 255),
-                1,
+                thickness,
                 cv2.LINE_AA,
             )
 
-    def _show_mask(
-        self,
-        depth_shape: tuple[int, int],
-        occupied_mask: np.ndarray | None,
-        roi_px: RoiPx | None,
-    ) -> None:
-        if occupied_mask is None:
-            mask = np.zeros(depth_shape, dtype=np.uint8)
-        else:
-            mask = (occupied_mask.astype(np.uint8) * 255)
-
-        mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-        if roi_px is not None and roi_px.x_max > roi_px.x_min:
-            roi = roi_px.clipped(width=depth_shape[1], height=depth_shape[0])
-            cv2.rectangle(
-                mask_bgr,
-                (roi.x_min, roi.y_min),
-                (roi.x_max, roi.y_max),
-                (0, 220, 255),
-                1,
-            )
-        cv2.imshow(self.mask_window_name, mask_bgr)
-
     @staticmethod
-    def _scale_roi(
-        roi: RoiPx, depth_shape: tuple[int, int], display_shape: tuple[int, int]
-    ) -> RoiPx:
+    def _scale_point(
+        point: tuple[int, int],
+        depth_shape: tuple[int, int],
+        display_shape: tuple[int, int],
+    ) -> tuple[int, int]:
         depth_h, depth_w = depth_shape
         display_h, display_w = display_shape
         sx = display_w / max(1, depth_w)
         sy = display_h / max(1, depth_h)
-        return RoiPx(
-            x_min=int(round(roi.x_min * sx)),
-            y_min=int(round(roi.y_min * sy)),
-            x_max=int(round(roi.x_max * sx)),
-            y_max=int(round(roi.y_max * sy)),
-        ).clipped(width=display_w, height=display_h)
+        return int(round(point[0] * sx)), int(round(point[1] * sy))
+
+    @staticmethod
+    def _fill_poly(
+        frame: np.ndarray,
+        points: list[tuple[int, int]],
+        color: tuple[int, int, int],
+        alpha: float,
+    ) -> None:
+        overlay = frame.copy()
+        polygon = np.array(points, dtype=np.int32)
+        cv2.fillPoly(overlay, [polygon], color)
+        cv2.addWeighted(overlay, alpha, frame, 1.0 - alpha, 0, frame)
+
+
+def _mean_point(points: list[tuple[int, int]]) -> tuple[int, int]:
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return int(round(sum(xs) / len(xs))), int(round(sum(ys) / len(ys)))

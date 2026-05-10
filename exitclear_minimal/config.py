@@ -19,6 +19,11 @@ DEFAULT_EARTHQUAKE_SAMPLE_RATE_HZ = 400
 DEFAULT_EARTHQUAKE_BATCH_THRESHOLD = 20
 DEFAULT_EARTHQUAKE_THRESHOLD_MPS2 = 0.98
 DEFAULT_EARTHQUAKE_MIN_DURATION_S = 0.05
+DEFAULT_PEOPLE_COUNTER_ENABLED = True
+DEFAULT_PEOPLE_COUNTER_MODEL_NAME = "luxonis/dm-count:shb-426x240"
+DEFAULT_PEOPLE_COUNTER_TENSOR_NAME = "density_map"
+DEFAULT_PEOPLE_COUNTER_RAW_SCALE = 242.0
+DEFAULT_PEOPLE_COUNTER_SMOOTHING_FRAMES = 5
 DEFAULT_AUDIO_ENABLED = False
 DEFAULT_AUDIO_OUTPUT_DIR = "generated_audio"
 DEFAULT_AUDIO_ALARM_PATH = "assets/alarm.mp3"
@@ -145,6 +150,15 @@ class EarthquakeConfig:
 
 
 @dataclass(frozen=True)
+class PeopleCounterConfig:
+    enabled: bool
+    model_name: str
+    tensor_name: str
+    raw_scale: float
+    smoothing_frames: int
+
+
+@dataclass(frozen=True)
 class AudioConfig:
     enabled: bool
     output_dir: str
@@ -170,6 +184,7 @@ class AppConfig:
     output: OutputConfig
     dashboard: DashboardConfig
     earthquake: EarthquakeConfig
+    people_counter: PeopleCounterConfig
     audio: AudioConfig
 
 
@@ -185,6 +200,7 @@ def load_config(path: str | Path) -> AppConfig:
     dashboard = raw.get("dashboard", {})
     dashboard_room = dashboard.get("room", {})
     earthquake = raw.get("earthquake", {})
+    people_counter = raw.get("people_counter", {})
     audio = raw.get("audio", {})
     audio_messages = audio.get("messages", {})
     voice_settings = audio.get("voice_settings", {})
@@ -274,6 +290,30 @@ def load_config(path: str | Path) -> AppConfig:
             min_duration_s=float(
                 earthquake.get(
                     "min_duration_s", DEFAULT_EARTHQUAKE_MIN_DURATION_S
+                )
+            ),
+        ),
+        people_counter=PeopleCounterConfig(
+            enabled=bool(
+                people_counter.get("enabled", DEFAULT_PEOPLE_COUNTER_ENABLED)
+            ),
+            model_name=str(
+                people_counter.get(
+                    "model_name", DEFAULT_PEOPLE_COUNTER_MODEL_NAME
+                )
+            ),
+            tensor_name=str(
+                people_counter.get(
+                    "tensor_name", DEFAULT_PEOPLE_COUNTER_TENSOR_NAME
+                )
+            ),
+            raw_scale=float(
+                people_counter.get("raw_scale", DEFAULT_PEOPLE_COUNTER_RAW_SCALE)
+            ),
+            smoothing_frames=int(
+                people_counter.get(
+                    "smoothing_frames",
+                    DEFAULT_PEOPLE_COUNTER_SMOOTHING_FRAMES,
                 )
             ),
         ),
@@ -394,6 +434,16 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("earthquake.threshold_mps2 must be positive")
     if earthquake.min_duration_s < 0.0:
         raise ValueError("earthquake.min_duration_s must be non-negative")
+
+    people_counter = config.people_counter
+    if not people_counter.model_name.strip():
+        raise ValueError("people_counter.model_name must not be empty")
+    if not people_counter.tensor_name.strip():
+        raise ValueError("people_counter.tensor_name must not be empty")
+    if people_counter.raw_scale <= 0.0:
+        raise ValueError("people_counter.raw_scale must be positive")
+    if people_counter.smoothing_frames < 1:
+        raise ValueError("people_counter.smoothing_frames must be at least 1")
 
     audio = config.audio
     if not audio.output_dir.strip():

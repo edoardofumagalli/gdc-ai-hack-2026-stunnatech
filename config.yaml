@@ -36,6 +36,13 @@ earthquake:
   threshold_mps2: 0.98
   min_duration_s: 0.05
 
+people_counter:
+  enabled: true
+  model_name: luxonis/dm-count:shb-426x240
+  tensor_name: density_map
+  raw_scale: 242.0
+  smoothing_frames: 5
+
 audio:
   enabled: true
   output_dir: generated_audio

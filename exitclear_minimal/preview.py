@@ -56,6 +56,7 @@ class LivePreview:
             state=state,
             occupancy_pct=occupancy_pct,
             persistence_s=persistence_s,
+            people_count=packet.people_count,
             anchor_label=anchor_label,
             baseline_progress=baseline_progress,
             baseline_total=baseline_total,
@@ -240,6 +241,7 @@ class LivePreview:
         state: State,
         occupancy_pct: float,
         persistence_s: float,
+        people_count: float | None,
         anchor_label: str | None,
         baseline_progress: int | None,
         baseline_total: int | None,
@@ -249,6 +251,7 @@ class LivePreview:
             f"State: {state.value}",
             f"Occupancy: {occupancy_pct:.1f}% / {monitoring.occupancy_threshold_pct:.1f}%",
             f"Persistence: {persistence_s:.1f}s / {monitoring.persistence_threshold_s:.1f}s",
+            f"People: {_format_people_count(people_count)}",
         ]
         if anchor_label:
             lines.append(f"Anchor: {anchor_label}")
@@ -326,3 +329,9 @@ def _mean_point(points: list[tuple[int, int]]) -> tuple[int, int]:
     xs = [point[0] for point in points]
     ys = [point[1] for point in points]
     return int(round(sum(xs) / len(xs))), int(round(sum(ys) / len(ys)))
+
+
+def _format_people_count(value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    return f"{value:.1f}"

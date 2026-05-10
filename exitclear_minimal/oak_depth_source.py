@@ -9,6 +9,7 @@ from .config import AppConfig
 from .depthai_helpers import configure_stereo, stereo_preset
 from .depth_source import FramePacket
 from .earthquake import EarthquakeDetector
+from .people_counter import PeopleCounter
 
 
 class OakDepthSource:
@@ -95,6 +96,31 @@ class OakDepthSource:
                     pass
                 depth_out = stereo.depth
 
+            people_counter = None
+            people_queue = None
+            if self.config.people_counter.enabled:
+                try:
+                    people_counter = PeopleCounter(self.config.people_counter)
+                    model_description = dai.NNModelDescription()
+                    model_description.model = self.config.people_counter.model_name
+                    model_description.platform = "RVC4"
+                    archive_path = dai.getModelFromZoo(
+                        model_description,
+                        useCached=True,
+                    )
+                    print(f"People counter model path: {archive_path}")
+                    nn_archive = dai.NNArchive(archive_path)
+                    people_nn = pipeline.create(dai.node.NeuralNetwork)
+                    people_nn.build(rgb_cam, nn_archive)
+                    people_queue = people_nn.out.createOutputQueue(
+                        blocking=False,
+                        maxSize=1,
+                    )
+                except Exception as exc:
+                    people_counter = None
+                    people_queue = None
+                    print(f"People counter disabled: {exc}")
+
             earthquake_detector = None
             imu_queue = None
             if self.config.earthquake.enabled:
@@ -117,6 +143,8 @@ class OakDepthSource:
             pipeline.start()
 
             last_rgb: np.ndarray | None = None
+            last_people_count: float | None = None
+            last_people_density_map: np.ndarray | None = None
             while self._running and pipeline.isRunning():
                 depth_msg = depth_queue.get()
                 if rgb_queue.has():
@@ -137,6 +165,19 @@ class OakDepthSource:
                                 earthquake_triggered or reading.triggered
                             )
 
+                if people_queue is not None and people_counter is not None:
+                    while people_queue.has():
+                        try:
+                            result = people_counter.update_from_nn(
+                                people_queue.get()
+                            )
+                        except Exception as exc:
+                            print(f"People counter frame skipped: {exc}")
+                            result = None
+                        if result is not None:
+                            last_people_count = result.smooth_count
+                            last_people_density_map = result.density_map
+
                 depth = depth_msg.getFrame()
                 if depth.ndim == 3:
                     depth = depth.squeeze()
@@ -148,6 +189,8 @@ class OakDepthSource:
                     intrinsics=intrinsics,
                     earthquake_triggered=earthquake_triggered,
                     earthquake_vibration_mps2=earthquake_vibration,
+                    people_count=last_people_count,
+                    people_density_map=last_people_density_map,
                 )
 
     def close(self) -> None:

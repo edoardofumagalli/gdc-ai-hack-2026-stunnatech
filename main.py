@@ -105,6 +105,15 @@ def main() -> int:
             anchor_px = volume.project_point(
                 volume.anchor, depth_shape, packet.intrinsics
             )
+            anchor_heatmap_px = volume.project_point(
+                volume.anchor, depth_shape, packet.intrinsics, clip=False
+            )
+            exit_location = _perimeter_exit_location(
+                anchor_heatmap_px,
+                depth_shape,
+                status_store.exit_identity["name"],
+            )
+            camera_location = _camera_location()
             volume_center_px = volume.project_point(
                 volume.center(), depth_shape, packet.intrinsics
             )
@@ -112,6 +121,9 @@ def main() -> int:
                 newly_triggered = status_store.trigger_earthquake(
                     timestamp=packet.timestamp,
                     vibration_mps2=packet.earthquake_vibration_mps2,
+                    people_density_map=packet.people_density_map,
+                    exit_location=exit_location,
+                    camera_location=camera_location,
                 )
                 if newly_triggered:
                     vibration = packet.earthquake_vibration_mps2
@@ -143,7 +155,11 @@ def main() -> int:
                         state=State.NO_BASELINE,
                         occupancy_pct=0.0,
                         persistence_s=0.0,
-                    )
+                    ),
+                    people_count=packet.people_count,
+                    people_density_map=packet.people_density_map,
+                    exit_location=exit_location,
+                    camera_location=camera_location,
                 )
                 if config.output.print_status:
                     print(
@@ -180,7 +196,13 @@ def main() -> int:
             status, previous_state = state_machine.update(
                 packet.timestamp, result.occupancy_pct
             )
-            status_store.update(status)
+            status_store.update(
+                status,
+                people_count=packet.people_count,
+                people_density_map=packet.people_density_map,
+                exit_location=exit_location,
+                camera_location=camera_location,
+            )
             if previous_state is not None:
                 event = event_writer.emit_state_change(
                     status, previous_state, result.roi_px
@@ -198,6 +220,7 @@ def main() -> int:
                     f"occupancy={status.occupancy_pct:.1f}% "
                     f"(raw={result.raw_occupancy_pct:.1f}%) | "
                     f"persistence={status.persistence_s:.1f}s | "
+                    f"people={_format_people_count(packet.people_count)} | "
                     f"valid={result.valid_pixels} | "
                     f"occupied={result.occupied_pixels}"
                 )
@@ -225,6 +248,57 @@ def main() -> int:
         preview.close()
 
     return 0
+
+
+def _format_people_count(value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    return f"{value:.1f}"
+
+
+def _perimeter_exit_location(
+    point_px: tuple[int, int] | None,
+    frame_shape: tuple[int, int],
+    label: str,
+) -> dict:
+    if point_px is None:
+        return {"label": label, "x": 0.5, "y": 0.0, "edge": "top"}
+    height, width = frame_shape
+    if width <= 1 or height <= 1:
+        return {"label": label, "x": 0.5, "y": 0.0, "edge": "top"}
+    x_px, y_px = point_px
+    x = max(0.0, min(1.0, x_px / (width - 1)))
+    y = max(0.0, min(1.0, y_px / (height - 1)))
+    distances = {
+        "top": y,
+        "bottom": 1.0 - y,
+        "left": x,
+        "right": 1.0 - x,
+    }
+    edge = min(distances, key=distances.get)
+    if edge == "top":
+        x, y = x, 0.0
+    elif edge == "bottom":
+        x, y = x, 1.0
+    elif edge == "left":
+        x, y = 0.0, y
+    else:
+        x, y = 1.0, y
+    return {
+        "label": label,
+        "x": x,
+        "y": y,
+        "edge": edge,
+    }
+
+
+def _camera_location() -> dict:
+    return {
+        "label": "You are here",
+        "x": 0.5,
+        "y": 1.0,
+        "edge": "bottom",
+    }
 
 
 if __name__ == "__main__":

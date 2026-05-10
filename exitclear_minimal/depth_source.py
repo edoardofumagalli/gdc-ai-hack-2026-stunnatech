@@ -15,6 +15,8 @@ class FramePacket:
     intrinsics: np.ndarray
     earthquake_triggered: bool = False
     earthquake_vibration_mps2: float | None = None
+    people_count: float | None = None
+    people_density_map: np.ndarray | None = None
 
 
 class DepthSource(Protocol):

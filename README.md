@@ -2,7 +2,7 @@
 
 Minimal hackathon MVP for depth-based volume-change detection with a Luxonis OAK camera.
 
-The program first detects an emergency-exit sign and uses its XYZ position as the anchor for the monitored clearance volume. It then captures an empty-scene depth baseline, monitors the configured 3D volume around that anchor, and marks pixels as occupied when the current depth is closer than the baseline by at least `depth_delta_mm`. If smoothed occupancy stays above `occupancy_threshold_pct` for `persistence_threshold_s`, it enters `TRIGGERED`, writes a JSONL event, and updates a local status API for the frontend dashboard. The same OAK pipeline can also listen to the IMU and trigger evacuation when sustained vibration suggests an earthquake.
+The program first detects an emergency-exit sign and uses its XYZ position as the anchor for the monitored clearance volume. It then captures an empty-scene depth baseline, monitors the configured 3D volume around that anchor, and marks pixels as occupied when the current depth is closer than the baseline by at least `depth_delta_mm`. If smoothed occupancy stays above `occupancy_threshold_pct` for `persistence_threshold_s`, it enters `TRIGGERED`, writes a JSONL event, and updates a local status API for the frontend dashboard. The same OAK pipeline can also listen to the IMU for earthquake detection and run a lightweight people-counting NN for the frontend room occupancy metric.
 
 This version uses object detection only for the first sign-localization step. The clearance monitoring itself remains depth-based and does not use segmentation, tracking, people counting, image streaming, cloud services, or custom models beyond the sign detector.
 
@@ -76,6 +76,10 @@ Key fields:
 - `earthquake.enabled`: enables IMU-based earthquake detection.
 - `earthquake.threshold_mps2`: vibration threshold in m/s^2 after subtracting gravity.
 - `earthquake.min_duration_s`: sustained vibration time before evacuation is triggered.
+- `people_counter.enabled`: enables the DM-Count camera node used for `people.current`.
+- `people_counter.model_name`: Luxonis model zoo name for people counting.
+- `people_counter.raw_scale`: density-map sum divisor used to convert raw model output to estimated people.
+- `people_counter.smoothing_frames`: rolling average window for people count.
 - `audio.enabled`: enables emergency audio generation through ElevenLabs.
 - `audio.output_dir`: folder where generated MP3 files are cached.
 - `audio.alarm_path`: optional local alarm MP3 to prepend before each voice message. Put your demo alarm at `assets/alarm.mp3` or update this path. If missing, a simple fallback alarm WAV is generated.
@@ -136,6 +140,10 @@ The preview uses one OpenCV window only. `show_occupied_mask` controls whether o
 
 The exit identity is derived from the detected sign label. For the current `emergency` label, the API returns `id: emergency_1`, `name: Emergency Exit 1`, and `type: emergency`.
 
+`people.current` is updated from the OAK people-counter node when `people_counter.enabled` is true. If the model is unavailable or no NN result has arrived yet, it remains at the last known value, initially `0`.
+
+`averageExitTimeSeconds` is included in every status, including `safe`, and is estimated from the current people count plus the number of clear exits.
+
 Generated emergency audio is served from:
 
 ```text
@@ -164,8 +172,9 @@ Example:
     "capacity": 100
   },
   "people": {
-    "current": 0
+    "current": 13
   },
+  "averageExitTimeSeconds": 13,
   "alerts": [],
   "exits": [
     {
@@ -257,6 +266,7 @@ A clear event uses `event_type: volume_occupancy_cleared` when occupancy returns
 - One ROI only.
 - The sign anchor is detected once at startup.
 - Clearance monitoring only detects depth changes inside the configured 3D volume.
+- People counting is an approximate density-map estimate and depends on `people_counter.raw_scale` calibration.
 - Baseline is captured once at startup and is not automatically refreshed.
 - Camera motion after baseline will produce false occupancy.
 - Reflective, transparent, dark, or very distant surfaces can produce invalid depth.

@@ -46,8 +46,10 @@ Key fields:
 - `monitoring.persistence_threshold_s`: seconds above threshold before entering `TRIGGERED`.
 - `monitoring.baseline_frames`: empty-scene frames used for the median baseline.
 - `monitoring.smoothing_frames`: rolling average window for occupancy percent.
-- `output.live_view`: enables the OpenCV preview.
-- `output.show_occupied_mask`: shows a second OpenCV mask window.
+- `output.events_path`: JSONL output path for trigger and clear events.
+- `output.show_occupied_mask`: overlays occupied pixels in the main OpenCV window.
+
+Console status, event writing, and live preview are enabled by default. They can still be overridden with `output.print_status`, `output.write_events_jsonl`, and `output.live_view` if needed, but they are intentionally left out of the default YAML.
 
 For example, if the detected anchor is:
 
@@ -81,15 +83,16 @@ The code uses high-quality camera defaults internally: `1280x800`, `15 FPS`, `HI
 The main OpenCV window shows:
 
 - RGB preview when available, otherwise a depth colormap.
-- Yellow rectangle around the projected monitored 3D volume.
-- Current state.
-- Smoothed occupancy percentage and threshold.
-- Persistence seconds and threshold.
-- Selected anchor label.
-- Baseline calibration progress.
+- Orange front face of the monitored volume, closer to the camera.
+- Green back face of the monitored volume, on the sign/door plane.
+- Yellow depth edges and arrow showing the direction from the sign plane toward the camera.
+- Red overlay on pixels currently considered occupied, if `show_occupied_mask` is enabled.
+- Magenta cross at the detected sign anchor.
+- Cyan cross at the projected center of the monitored volume.
+- A compact status box with current state, smoothed occupancy percentage, threshold, persistence seconds, selected anchor label, and baseline calibration progress.
 - `Press q to quit`.
 
-If `show_occupied_mask` is enabled, the mask window shows occupied pixels in white and the projected volume outline in yellow.
+The preview uses one OpenCV window only. `show_occupied_mask` controls whether occupied pixels are drawn on top of the live RGB feed.
 
 ## Events
 

@@ -10,7 +10,7 @@ monitoring:
 
   volume_mm:
     width_mm: 1000
-    height_below_anchor_mm: 1000
+    height_below_anchor_mm: 2400
     depth_before_anchor_mm: 1000
 
   depth_delta_mm: 150
@@ -20,8 +20,5 @@ monitoring:
   smoothing_frames: 5
 
 output:
-  print_status: true
-  write_events_jsonl: true
   events_path: events.jsonl
-  live_view: true
   show_occupied_mask: true

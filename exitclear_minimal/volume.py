@@ -76,6 +76,50 @@ class MonitoredVolume:
             "volume_bounds_mm": self.bounds.as_dict(),
         }
 
+    def center(self) -> SpatialPoint:
+        return SpatialPoint(
+            x_mm=(self.bounds.x_min_mm + self.bounds.x_max_mm) / 2.0,
+            y_mm=(self.bounds.y_min_mm + self.bounds.y_max_mm) / 2.0,
+            z_mm=(self.bounds.z_min_mm + self.bounds.z_max_mm) / 2.0,
+        )
+
+    def corners(self) -> list[SpatialPoint]:
+        bounds = self.bounds
+        return [
+            SpatialPoint(x, y, z)
+            for z in (bounds.z_min_mm, bounds.z_max_mm)
+            for y in (bounds.y_min_mm, bounds.y_max_mm)
+            for x in (bounds.x_min_mm, bounds.x_max_mm)
+        ]
+
+    def projected_corners(
+        self, depth_shape: tuple[int, int], intrinsics: np.ndarray
+    ) -> list[tuple[int, int] | None]:
+        return [
+            self.project_point(point, depth_shape, intrinsics, clip=False)
+            for point in self.corners()
+        ]
+
+    def project_point(
+        self,
+        point: SpatialPoint,
+        depth_shape: tuple[int, int],
+        intrinsics: np.ndarray,
+        clip: bool = True,
+    ) -> tuple[int, int] | None:
+        if point.z_mm <= 0:
+            return None
+
+        height, width = depth_shape
+        fx, fy = float(intrinsics[0][0]), float(intrinsics[1][1])
+        cx, cy = float(intrinsics[0][2]), float(intrinsics[1][2])
+
+        u = int(round((point.x_mm * fx / point.z_mm) + cx))
+        v = int(round(cy - (point.y_mm * fy / point.z_mm)))
+        if clip and (u < 0 or u >= width or v < 0 or v >= height):
+            return None
+        return u, v
+
     def projection_mask(
         self, depth_shape: tuple[int, int], intrinsics: np.ndarray
     ) -> np.ndarray:

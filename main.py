@@ -73,8 +73,15 @@ def main() -> int:
 
     try:
         for packet in source.frames():
-            projected_roi = volume.projected_roi(
-                packet.depth_frame.shape[:2], packet.intrinsics
+            depth_shape = packet.depth_frame.shape[:2]
+            volume_corners_px = volume.projected_corners(
+                depth_shape, packet.intrinsics
+            )
+            anchor_px = volume.project_point(
+                volume.anchor, depth_shape, packet.intrinsics
+            )
+            volume_center_px = volume.project_point(
+                volume.center(), depth_shape, packet.intrinsics
             )
             if baseline_depth is None:
                 baseline.add(packet.depth_frame)
@@ -89,7 +96,9 @@ def main() -> int:
                 keep_running = preview.show(
                     packet=packet,
                     state=State.NO_BASELINE,
-                    roi_px=projected_roi,
+                    volume_corners_px=volume_corners_px,
+                    anchor_px=anchor_px,
+                    volume_center_px=volume_center_px,
                     anchor_label=anchor_label,
                     baseline_progress=baseline.progress,
                     baseline_total=baseline.frame_count,
@@ -139,7 +148,9 @@ def main() -> int:
                 occupancy_pct=status.occupancy_pct,
                 persistence_s=status.persistence_s,
                 occupied_mask=result.occupied_mask,
-                roi_px=result.roi_px,
+                volume_corners_px=volume_corners_px,
+                anchor_px=anchor_px,
+                volume_center_px=volume_center_px,
                 anchor_label=anchor_label,
             )
             if not keep_running:

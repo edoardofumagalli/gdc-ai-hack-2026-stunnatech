@@ -1,6 +1,0 @@
-depthai
-fastapi
-numpy
-opencv-python
-PyYAML
-uvicorn

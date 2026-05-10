@@ -8,6 +8,7 @@ import numpy as np
 from .config import AppConfig
 from .depthai_helpers import configure_stereo, stereo_preset
 from .depth_source import FramePacket
+from .earthquake import EarthquakeDetector
 
 
 class OakDepthSource:
@@ -94,6 +95,21 @@ class OakDepthSource:
                     pass
                 depth_out = stereo.depth
 
+            earthquake_detector = None
+            imu_queue = None
+            if self.config.earthquake.enabled:
+                earthquake_detector = EarthquakeDetector(self.config.earthquake)
+                imu = pipeline.create(dai.node.IMU)
+                imu.enableIMUSensor(
+                    dai.IMUSensor.ACCELEROMETER_RAW,
+                    self.config.earthquake.sample_rate_hz,
+                )
+                imu.setBatchReportThreshold(
+                    self.config.earthquake.batch_threshold
+                )
+                imu.setMaxBatchReports(10)
+                imu_queue = imu.out.createOutputQueue(blocking=False, maxSize=4)
+
             rgb_queue = rgb_out.createOutputQueue(blocking=False, maxSize=1)
             depth_queue = depth_out.createOutputQueue(blocking=True, maxSize=1)
 
@@ -106,6 +122,21 @@ class OakDepthSource:
                 if rgb_queue.has():
                     last_rgb = rgb_queue.get().getCvFrame()
 
+                earthquake_triggered = False
+                earthquake_vibration = None
+                if imu_queue is not None and earthquake_detector is not None:
+                    while imu_queue.has():
+                        imu_data = imu_queue.get()
+                        for packet in imu_data.packets:
+                            accel = packet.acceleroMeter
+                            reading = earthquake_detector.update(
+                                accel.x, accel.y, accel.z
+                            )
+                            earthquake_vibration = reading.vibration_mps2
+                            earthquake_triggered = (
+                                earthquake_triggered or reading.triggered
+                            )
+
                 depth = depth_msg.getFrame()
                 if depth.ndim == 3:
                     depth = depth.squeeze()
@@ -115,6 +146,8 @@ class OakDepthSource:
                     rgb_frame=last_rgb,
                     depth_frame=depth.astype(np.float32, copy=False),
                     intrinsics=intrinsics,
+                    earthquake_triggered=earthquake_triggered,
+                    earthquake_vibration_mps2=earthquake_vibration,
                 )
 
     def close(self) -> None:

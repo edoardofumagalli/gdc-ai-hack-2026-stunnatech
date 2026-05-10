@@ -2,9 +2,9 @@
 
 Minimal hackathon MVP for depth-based volume-change detection with a Luxonis OAK camera.
 
-The program first detects an emergency-exit sign and uses its XYZ position as the anchor for the monitored clearance volume. It then captures an empty-scene depth baseline, monitors the configured 3D volume around that anchor, and marks pixels as occupied when the current depth is closer than the baseline by at least `depth_delta_mm`. If smoothed occupancy stays above `occupancy_threshold_pct` for `persistence_threshold_s`, it enters `TRIGGERED` and writes a JSONL event.
+The program first detects an emergency-exit sign and uses its XYZ position as the anchor for the monitored clearance volume. It then captures an empty-scene depth baseline, monitors the configured 3D volume around that anchor, and marks pixels as occupied when the current depth is closer than the baseline by at least `depth_delta_mm`. If smoothed occupancy stays above `occupancy_threshold_pct` for `persistence_threshold_s`, it enters `TRIGGERED`, writes a JSONL event, and updates a local status API for the frontend dashboard. The same OAK pipeline can also listen to the IMU and trigger evacuation when sustained vibration suggests an earthquake.
 
-This version uses object detection only for the first sign-localization step. The clearance monitoring itself remains depth-based and does not use segmentation, tracking, people counting, web APIs, React, or cloud services.
+This version uses object detection only for the first sign-localization step. The clearance monitoring itself remains depth-based and does not use segmentation, tracking, people counting, image streaming, cloud services, or custom models beyond the sign detector.
 
 ## Install
 
@@ -32,6 +32,19 @@ python main.py --model /path/to/yolo.rvc4.tar.xz
 
 Press `q` in the OpenCV window or `Ctrl+C` in the terminal to quit cleanly.
 
+The process also starts a local status API:
+
+```text
+GET http://localhost:8000/api/status
+GET http://localhost:8000/health
+```
+
+If needed, override the bind address:
+
+```bash
+python main.py --api-host 0.0.0.0 --api-port 8000
+```
+
 ## Tune `config.yaml`
 
 Key fields:
@@ -48,6 +61,12 @@ Key fields:
 - `monitoring.smoothing_frames`: rolling average window for occupancy percent.
 - `output.events_path`: JSONL output path for trigger and clear events.
 - `output.show_occupied_mask`: overlays occupied pixels in the main OpenCV window.
+- `dashboard.room.name`: room name shown by the frontend.
+- `dashboard.room.device_id`: frontend-facing device label.
+- `dashboard.room.capacity`: room capacity shown by the frontend.
+- `earthquake.enabled`: enables IMU-based earthquake detection.
+- `earthquake.threshold_mps2`: vibration threshold in m/s^2 after subtracting gravity.
+- `earthquake.min_duration_s`: sustained vibration time before evacuation is triggered.
 
 Console status, event writing, and live preview are enabled by default. They can still be overridden with `output.print_status`, `output.write_events_jsonl`, and `output.live_view` if needed, but they are intentionally left out of the default YAML.
 
@@ -94,6 +113,88 @@ The main OpenCV window shows:
 
 The preview uses one OpenCV window only. `show_occupied_mask` controls whether occupied pixels are drawn on top of the live RGB feed.
 
+## Status API
+
+`GET /api/status` returns the latest in-memory snapshot for the frontend. It does not read from `events.jsonl`; events remain an append-only history.
+
+The exit identity is derived from the detected sign label. For the current `emergency` label, the API returns `id: emergency_1`, `name: Emergency Exit 1`, and `type: emergency`.
+
+State mapping:
+
+- `NO_BASELINE` and `CLEAR` -> dashboard `state: safe`, exit `status: CLEAR`.
+- `OCCUPIED_PENDING` -> dashboard `state: caution`, exit `status: OCCUPIED_PENDING`.
+- `TRIGGERED` -> dashboard `state: danger`, exit `status: TRIGGERED`.
+- IMU earthquake trigger -> dashboard `state: emergency`, with an evacuation payload. This is latched until the backend is restarted.
+
+Example:
+
+```json
+{
+  "state": "danger",
+  "room": {
+    "name": "Aula 4",
+    "deviceId": "OAK-4D",
+    "capacity": 100
+  },
+  "people": {
+    "current": 0
+  },
+  "alerts": [],
+  "exits": [
+    {
+      "id": "emergency_1",
+      "name": "Emergency Exit 1",
+      "type": "emergency",
+      "status": "TRIGGERED",
+      "occupancy": 23.6,
+      "occupancyThreshold": 15.0
+    }
+  ],
+  "updatedAt": "2026-05-10T02:30:00.000+02:00"
+}
+```
+
+An earthquake evacuation response keeps the exit status visible and adds an alert:
+
+```json
+{
+  "state": "emergency",
+  "room": {
+    "name": "Aula 4",
+    "deviceId": "OAK-4D",
+    "capacity": 100
+  },
+  "people": {
+    "current": 0
+  },
+  "alerts": [
+    {
+      "severity": "emergency",
+      "title": "Earthquake detected",
+      "description": "OAK IMU detected sustained vibration above threshold (1.12 m/s^2)."
+    }
+  ],
+  "exits": [
+    {
+      "id": "emergency_1",
+      "name": "Emergency Exit 1",
+      "type": "emergency",
+      "status": "CLEAR",
+      "occupancy": 0.0,
+      "occupancyThreshold": 15.0
+    }
+  ],
+  "evacuation": {
+    "primaryExitId": "emergency_1",
+    "route": "Emergency Exit 1",
+    "arrow": "←",
+    "startedAt": "2026-05-10T02:30:00.000+02:00",
+    "label": "Use Emergency Exit 1"
+  },
+  "updatedAt": "2026-05-10T02:30:00.000+02:00"
+}
+```
+
 ## Events
 
 Events are appended to `events.jsonl` by default. A triggered event looks like:
@@ -113,3 +214,4 @@ A clear event uses `event_type: volume_occupancy_cleared` when occupancy returns
 - Camera motion after baseline will produce false occupancy.
 - Reflective, transparent, dark, or very distant surfaces can produce invalid depth.
 - The projected volume uses camera intrinsics and assumes aligned depth/RGB output.
+- Earthquake evacuation is latched and currently clears only on backend restart.

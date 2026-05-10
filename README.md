@@ -1,272 +1,133 @@
-# ExitClear Minimal
 
-Minimal hackathon MVP for depth-based volume-change detection with a Luxonis OAK camera.
+# SeeCure - Spatial Safety Intellligence
 
-The program first detects an emergency-exit sign and uses its XYZ position as the anchor for the monitored clearance volume. It then captures an empty-scene depth baseline, monitors the configured 3D volume around that anchor, and marks pixels as occupied when the current depth is closer than the baseline by at least `depth_delta_mm`. If smoothed occupancy stays above `occupancy_threshold_pct` for `persistence_threshold_s`, it enters `TRIGGERED`, writes a JSONL event, and updates a local status API for the frontend dashboard. The same OAK pipeline can also listen to the IMU for earthquake detection and run a lightweight people-counting NN for the frontend room occupancy metric.
+SeeCure — an intelligent, edge-first safety monitoring system
 
-This version uses object detection only for the first sign-localization step. The clearance monitoring itself remains depth-based and does not use segmentation, tracking, people counting, image streaming, cloud services, or custom models beyond the sign detector.
+SeeCure is an intelligent, edge-first safety monitoring system that reasons in three dimensions. Using depth-capable cameras and on-device compute, SeeCure automatically detects emergency exits, observes the clearance volume beneath each exit for obstructions, counts people in the room, and estimates evacuation time. It fuses these signals and makes real-time safety judgments, including earthquake detection and alarm generation, without sending data to the cloud. The system summarizes its assessment into four safety levels — Safe, Hazard, Danger, Evacuate — so operators get immediate, actionable guidance.
 
-## Install
+High-level behaviors (non-technical):
 
-From the project root:
+- Safe: exits are unobstructed, occupancy is within safe limits, and no earthquake is detected.
+- Alert: a new object has been detected within an exit clearance volume that may hinder evacuation, and/or the number of people in the room is at least 90% of the room’s maximum capacity.
+- Danger: an obstruction has persisted beneath an exit for a sustained period, and/or the number of people in the room exceeds the room’s maximum capacity.
+- Evacuate: an earthquake is detected and evacuation procedures should begin.
+
+The goal of SeeCure is to reduce the chance that a catastrophic event becomes worse because exits are blocked or occupancy prevents effective evacuation. The remainder of this README explains the repository structure, how to run the demo, example outputs, and where to find the technical writeup for implementation details.
+
+## Project structure — main components
+
+- `main.py`: entry point; parses args, loads `config.yaml`, runs sign detection, builds the monitored volume, and wires together the pipeline (device, baseline, occupancy monitor, API, preview, audio, events).
+- `config.yaml`: central configuration for volumes, thresholds, people counter, earthquake detector, audio, and outputs.
+- `exitclear_minimal/`: primary package containing implementation modules:
+  - `oak_depth_source.py`: OAK device pipeline and frame producer (depth, RGB, IMU, people NN).
+  - `people_counter.py`: converts NN output into a smooth people count and density map.
+  - `earthquake.py`: IMU-based vibration detector and trigger logic.
+  - `sign_detection.py`: runs the sign detector to find the exit anchor.
+  - `baseline.py`: captures empty-scene depth baseline.
+  - `occupancy.py` and `state_machine.py`: compute occupancy percent and map it to Safe/Hazard/Danger states.
+  - `preview.py`: OpenCV live view and overlays.
+  - `api.py`: lightweight status API for the dashboard.
+  - `audio.py`: emergency audio generation and composition (ElevenLabs + ffmpeg fallback).
+  - `events.py`: append-only event writer for triggers and clears.
+- `assets/` and `generated_audio/`: optional demo media and runtime audio cache.
+- `events.jsonl`: append-only event history (configurable path).
+
+
+## Setup & Run
+
+This section describes how to prepare an environment and run the system so external users can reproduce the demo.
+
+Requirements
+
+- Python 3.10 or newer.
+- A Luxonis OAK device for full functionality (depth, IMU, people counter). The code uses the `depthai` package to talk to the device.
+- Optional: `ffmpeg` to compose alarm + repeated voice MP3s. If `ffmpeg` is missing the app falls back to a single voice file + alarm sequence.
+- Internet access at first run to fetch people-counter NN models from the Luxonis model zoo (or pre-download them if running offline).
+
+Create the Python environment and install dependencies:
 
 ```bash
+# Windows (PowerShell)
 python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+# Windows (Command Prompt)
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install -r requirements.txt
+# macOS / Linux
+python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-For ElevenLabs emergency audio, set the API key in the shell before running.
-To compose alarm + repeated voice into a single MP3, install `ffmpeg` too:
+Install system `ffmpeg` (optional):
+
+- macOS: `brew install ffmpeg`
+- Ubuntu/Debian: `sudo apt update && sudo apt install ffmpeg`
+- Windows: install `ffmpeg` and add it to `PATH` (choco or manual download)
+
+Configure the sign detector model
+
+- The project expects the sign detector archive referenced by `sign_detection.model_path` in `config.yaml` (default: `yolo.rvc4.tar.xz`).
+- Put the model file next to `config.yaml` or edit `sign_detection.model_path` to point to the archive.
+- You can override the model path at runtime with `--model` (see examples below). If the model file is missing, `main.py` will raise an informative FileNotFoundError.
+
+Environment variables (optional)
+
+- `ELEVENLABS_API_KEY`: set this to enable ElevenLabs TTS for emergency voice audio.
+  - Bash/macOS: `export ELEVENLABS_API_KEY="your-key"`
+  - PowerShell: `$env:ELEVENLABS_API_KEY = 'your-key'`
+
+Run the system
 
 ```bash
-export ELEVENLABS_API_KEY="your-key"
-# macOS, if needed:
-brew install ffmpeg
-```
-
-## Run
-
-Put the sign detection model archive next to `config.yaml` or update `sign_detection.model_path`, connect the OAK 4 D, then run:
-
-```bash
+# default: reads config.yaml in project root
 python main.py
-```
 
-You can also override the model path without editing YAML:
-
-```bash
-python main.py --model /path/to/yolo.rvc4.tar.xz
-```
-
-Press `q` in the OpenCV window or `Ctrl+C` in the terminal to quit cleanly.
-
-The process also starts a local status API:
-
-```text
-GET http://localhost:8000/api/status
-GET http://localhost:8000/health
-```
-
-If needed, override the bind address:
-
-```bash
+# useful options
+python main.py --config config.yaml            # alternate config path
+python main.py --model /path/to/model.tar.xz  # override sign detector archive
 python main.py --api-host 0.0.0.0 --api-port 8000
 ```
 
+What to expect
+
+- The app connects to an OAK device via `depthai`. If `depthai` is not installed or the device is not connected, the program will raise an informative error.
+- `events.jsonl` (configured in `config.yaml`) will be appended with trigger and clear events.
+- A local status API is started (default `http://0.0.0.0:8000`) and serves `/api/status` and audio files if generated.
+- If `ffmpeg` is missing, the audio service will fall back to a voice + alarm sequence and print a warning.
+
+Troubleshooting & notes
+
+- People counting uses a model from the Luxonis model zoo. Ensure internet access or pre-download the model archive to avoid runtime fetches.
+- On headless machines the OpenCV preview window may not work; disable live preview in `config.yaml` if needed (`output.live_view: false`).
+- If you see `Sign detection model not found`, either download the model archive, update `config.yaml`, or pass `--model`.
+- For device-specific errors (enumeration failures, missing firmware), consult the `depthai` / OAK documentation and ensure the device is connected and supported.
+
 ## Tune `config.yaml`
 
-Key fields:
+The `config.yaml` file exposes the parameters that control monitored volume geometry, depth sensitivity, persistence, people-count smoothing and audio behavior. Adjust these values to match the physical room, camera position, and acceptable false-positive rate. For step-by-step tuning guidance and example values, keep a copy of observed runs (preview, `events.jsonl`, and `/api/status`) and iterate the parameters below. 
 
-- `sign_detection.model_path`: local YOLO archive used to find the emergency sign.
-- `sign_detection.target_label`: label to use as the monitored volume anchor. If empty, the first valid detection is used.
-- `monitoring.volume_mm.width_mm`: monitored width around the anchor, half left and half right.
-- `monitoring.volume_mm.height_below_anchor_mm`: monitored height below the anchor Y coordinate.
-- `monitoring.volume_mm.depth_before_anchor_mm`: monitored depth in front of the anchor Z coordinate, toward the camera.
-- `monitoring.depth_delta_mm`: a pixel is occupied when it is this much closer than baseline.
-- `monitoring.occupancy_threshold_pct`: percentage of valid projected-volume pixels required to start pending.
-- `monitoring.persistence_threshold_s`: seconds above threshold before entering `TRIGGERED`.
-- `monitoring.baseline_frames`: empty-scene frames used for the median baseline.
-- `monitoring.smoothing_frames`: rolling average window for occupancy percent.
-- `output.events_path`: JSONL output path for trigger and clear events.
-- `output.show_occupied_mask`: overlays occupied pixels in the main OpenCV window.
-- `dashboard.room.name`: room name shown by the frontend.
-- `dashboard.room.device_id`: frontend-facing device label.
-- `dashboard.room.capacity`: room capacity shown by the frontend.
-- `earthquake.enabled`: enables IMU-based earthquake detection.
-- `earthquake.threshold_mps2`: vibration threshold in m/s^2 after subtracting gravity.
-- `earthquake.min_duration_s`: sustained vibration time before evacuation is triggered.
-- `people_counter.enabled`: enables the DM-Count camera node used for `people.current`.
-- `people_counter.model_name`: Luxonis model zoo name for people counting.
-- `people_counter.raw_scale`: density-map sum divisor used to convert raw model output to estimated people.
-- `people_counter.smoothing_frames`: rolling average window for people count.
-- `audio.enabled`: enables emergency audio generation through ElevenLabs.
-- `audio.output_dir`: folder where generated MP3 files are cached.
-- `audio.alarm_path`: optional local alarm MP3 to prepend before each voice message. Put your demo alarm at `assets/alarm.mp3` or update this path. If missing, a simple fallback alarm WAV is generated.
-- `audio.repeat_count`: number of alarm/voice repetitions in the final emergency MP3.
-- `audio.pause_ms`: silence between repeated emergency messages.
-- `audio.voice_id`: ElevenLabs voice ID.
-- `audio.voice_settings`: ElevenLabs voice settings used to make the announcement more urgent.
-- `audio.messages.earthquake`: template for the earthquake evacuation message.
+Config options and tuning details are documented in the technical file, `TECHNICAL.md`.
 
-Console status, event writing, and live preview are enabled by default. They can still be overridden with `output.print_status`, `output.write_events_jsonl`, and `output.live_view` if needed, but they are intentionally left out of the default YAML.
 
-For example, if the detected anchor is:
-
-```text
-X=0 mm, Y=2000 mm, Z=10000 mm
-```
-
-and the configured volume is:
-
-```yaml
-volume_mm:
-  width_mm: 1500
-  height_below_anchor_mm: 2000
-  depth_before_anchor_mm: 1000
-```
-
-the monitored volume becomes:
-
-```text
-X: -750..750 mm
-Y: 0..2000 mm
-Z: 9000..10000 mm
-```
-
-For demo tuning, start with the provided values, place the camera where it will run, make sure the sign is detected, keep the clearance volume empty during baseline calibration, then adjust volume dimensions and thresholds.
-
-The code uses high-quality camera defaults internally: `1280x800`, `15 FPS`, `HIGH_DETAIL`, subpixel depth, and `KERNEL_7x7` median filtering. These are hidden from the normal YAML to keep hackathon tuning focused on the monitored volume and trigger thresholds. If the device rejects the resolution or runs too slowly, add `frame_size: [640, 400]` under `monitoring` and `stereo_size: [640, 400]` under `sign_detection`.
-
-## Live View
-
-The main OpenCV window shows:
-
-- RGB preview when available, otherwise a depth colormap.
-- Orange front face of the monitored volume, closer to the camera.
-- Green back face of the monitored volume, on the sign/door plane.
-- Yellow depth edges and arrow showing the direction from the sign plane toward the camera.
-- Red overlay on pixels currently considered occupied, if `show_occupied_mask` is enabled.
-- Magenta cross at the detected sign anchor.
-- Cyan cross at the projected center of the monitored volume.
-- A compact status box with current state, smoothed occupancy percentage, threshold, persistence seconds, selected anchor label, and baseline calibration progress.
-- `Press q to quit`.
-
-The preview uses one OpenCV window only. `show_occupied_mask` controls whether occupied pixels are drawn on top of the live RGB feed.
 
 ## Status API
 
-`GET /api/status` returns the latest in-memory snapshot for the frontend. It does not read from `events.jsonl`; events remain an append-only history.
+See the `TECHNICAL.md` file for full API examples, schemas, and event formats. Quick checks:
 
-The exit identity is derived from the detected sign label. For the current `emergency` label, the API returns `id: emergency_1`, `name: Emergency Exit 1`, and `type: emergency`.
+- `GET /api/status` — returns the latest dashboard snapshot.
+- `GET /health` — basic health check.
+- Generated audio is served from `/audio/<filename>.mp3` when audio is enabled.
 
-`people.current` is updated from the OAK people-counter node when `people_counter.enabled` is true. If the model is unavailable or no NN result has arrived yet, it remains at the last known value, initially `0`.
 
-`averageExitTimeSeconds` is included in every status, including `safe`, and is estimated from the current people count plus the number of clear exits.
-
-Generated emergency audio is served from:
-
-```text
-GET /audio/<filename>.mp3
-```
-
-State mapping:
-
-- `NO_BASELINE` and `CLEAR` -> dashboard `state: safe`, exit `status: CLEAR`.
-- `OCCUPIED_PENDING` -> dashboard `state: caution`, exit `status: OCCUPIED_PENDING`.
-- `TRIGGERED` -> dashboard `state: danger`, exit `status: TRIGGERED`.
-- IMU earthquake trigger -> dashboard `state: emergency`, with an evacuation payload. This is latched until the backend is restarted.
-
-When audio is enabled and `ELEVENLABS_API_KEY` is available, the earthquake trigger generates one cached voice MP3 with ElevenLabs, then composes a final emergency MP3 from the optional alarm sound plus the repeated voice message. The final `audioUrl` is added to both `alerts[0]` and `evacuation`.
-
-If `assets/alarm.mp3` is missing, the backend generates `generated_audio/default_alarm.wav`. If `ffmpeg` is missing, the API also returns `audioSequence`, allowing the frontend to play alarm and voice clips in order without a pre-composed MP3.
-
-Example:
-
-```json
-{
-  "state": "danger",
-  "room": {
-    "name": "Aula 4",
-    "deviceId": "OAK-4D",
-    "capacity": 100
-  },
-  "people": {
-    "current": 13
-  },
-  "averageExitTimeSeconds": 13,
-  "alerts": [],
-  "exits": [
-    {
-      "id": "emergency_1",
-      "name": "Emergency Exit 1",
-      "type": "emergency",
-      "status": "TRIGGERED",
-      "occupancy": 23.6,
-      "occupancyThreshold": 15.0
-    }
-  ],
-  "updatedAt": "2026-05-10T02:30:00.000+02:00"
-}
-```
-
-An earthquake evacuation response keeps the exit status visible and adds an alert:
-
-```json
-{
-  "state": "emergency",
-  "room": {
-    "name": "Aula 4",
-    "deviceId": "OAK-4D",
-    "capacity": 100
-  },
-  "people": {
-    "current": 0
-  },
-  "alerts": [
-    {
-      "severity": "emergency",
-      "title": "Earthquake detected",
-      "description": "OAK IMU detected sustained vibration above threshold (1.12 m/s^2).",
-      "audioUrl": "http://localhost:8000/audio/earthquake_emergency_1_voice.mp3",
-      "audioSequence": [
-        "http://localhost:8000/audio/default_alarm.wav",
-        "http://localhost:8000/audio/earthquake_emergency_1_voice.mp3",
-        "http://localhost:8000/audio/default_alarm.wav",
-        "http://localhost:8000/audio/earthquake_emergency_1_voice.mp3",
-        "http://localhost:8000/audio/default_alarm.wav",
-        "http://localhost:8000/audio/earthquake_emergency_1_voice.mp3"
-      ],
-      "audioPauseMs": 650
-    }
-  ],
-  "exits": [
-    {
-      "id": "emergency_1",
-      "name": "Emergency Exit 1",
-      "type": "emergency",
-      "status": "CLEAR",
-      "occupancy": 0.0,
-      "occupancyThreshold": 15.0
-    }
-  ],
-  "evacuation": {
-    "primaryExitId": "emergency_1",
-    "route": "Emergency Exit 1",
-    "arrow": "←",
-    "startedAt": "2026-05-10T02:30:00.000+02:00",
-    "label": "Use Emergency Exit 1",
-    "audioUrl": "http://localhost:8000/audio/earthquake_emergency_1_voice.mp3",
-    "audioSequence": [
-      "http://localhost:8000/audio/default_alarm.wav",
-      "http://localhost:8000/audio/earthquake_emergency_1_voice.mp3",
-      "http://localhost:8000/audio/default_alarm.wav",
-      "http://localhost:8000/audio/earthquake_emergency_1_voice.mp3",
-      "http://localhost:8000/audio/default_alarm.wav",
-      "http://localhost:8000/audio/earthquake_emergency_1_voice.mp3"
-    ],
-    "audioPauseMs": 650
-  },
-  "updatedAt": "2026-05-10T02:30:00.000+02:00"
-}
-```
-
-## Events
-
-Events are appended to `events.jsonl` by default. A triggered event looks like:
-
-```json
-{"anchor_label":"emergency","anchor_xyz_mm":{"x_mm":0.0,"y_mm":2000.0,"z_mm":10000.0},"depth_delta_mm":150,"device_id":"oak4d-exitclear-minimal-01","event_type":"volume_occupancy_triggered","occupancy_pct":25.7,"occupancy_threshold_pct":15.0,"persistence_s":3.0,"persistence_threshold_s":3.0,"projected_roi_px":{"x_max":362,"x_min":279,"y_max":201,"y_min":89},"state":"TRIGGERED","timestamp":"2026-05-09T12:34:56.789+02:00","volume_bounds_mm":{"x_max_mm":750.0,"x_min_mm":-750.0,"y_max_mm":2000.0,"y_min_mm":0.0,"z_max_mm":10000.0,"z_min_mm":9000.0},"volume_mm":{"depth_before_anchor_mm":1000,"height_below_anchor_mm":2000,"width_mm":1500},"zone_id":"exit_clearance_volume"}
-```
-
-A clear event uses `event_type: volume_occupancy_cleared` when occupancy returns below threshold after pending or triggered.
 
 ## Known Limitations
 
 - One ROI only.
 - The sign anchor is detected once at startup.
 - Clearance monitoring only detects depth changes inside the configured 3D volume.
-- People counting is an approximate density-map estimate and depends on `people_counter.raw_scale` calibration.
 - Baseline is captured once at startup and is not automatically refreshed.
 - Camera motion after baseline will produce false occupancy.
 - Reflective, transparent, dark, or very distant surfaces can produce invalid depth.

@@ -22,6 +22,9 @@ class DashboardStatusStore:
         )
         self._earthquake_started_at: datetime | None = None
         self._earthquake_vibration_mps2: float | None = None
+        self._earthquake_audio_url: str | None = None
+        self._earthquake_audio_sequence: list[str] | None = None
+        self._earthquake_audio_pause_ms: int | None = None
         self._snapshot = self._build_snapshot(
             timestamp=self._last_status.timestamp,
             status=self._last_status,
@@ -40,17 +43,43 @@ class DashboardStatusStore:
         *,
         timestamp: datetime,
         vibration_mps2: float | None,
+        audio_url: str | None = None,
+        audio_sequence: list[str] | None = None,
+        audio_pause_ms: int | None = None,
     ) -> bool:
         with self._lock:
             newly_triggered = self._earthquake_started_at is None
             if newly_triggered:
                 self._earthquake_started_at = timestamp
             self._earthquake_vibration_mps2 = vibration_mps2
+            if audio_url is not None:
+                self._earthquake_audio_url = audio_url
+            if audio_sequence is not None:
+                self._earthquake_audio_sequence = audio_sequence
+            if audio_pause_ms is not None:
+                self._earthquake_audio_pause_ms = audio_pause_ms
             self._snapshot = self._build_snapshot(
                 timestamp=timestamp,
                 status=self._last_status,
             )
             return newly_triggered
+
+    def set_earthquake_audio(
+        self,
+        *,
+        audio_url: str,
+        audio_sequence: list[str] | None = None,
+        audio_pause_ms: int | None = None,
+    ) -> None:
+        with self._lock:
+            self._earthquake_audio_url = audio_url
+            self._earthquake_audio_sequence = audio_sequence
+            self._earthquake_audio_pause_ms = audio_pause_ms
+            timestamp = self._earthquake_started_at or datetime.now().astimezone()
+            self._snapshot = self._build_snapshot(
+                timestamp=timestamp,
+                status=self._last_status,
+            )
 
     def get(self) -> dict:
         with self._lock:
@@ -94,20 +123,21 @@ class DashboardStatusStore:
         if emergency_active:
             started_at = self._earthquake_started_at
             vibration = self._earthquake_vibration_mps2
+            audio_url = self._earthquake_audio_url
+            audio_sequence = self._earthquake_audio_sequence
+            audio_pause_ms = self._earthquake_audio_pause_ms
             description = "OAK IMU detected sustained vibration above threshold."
             if vibration is not None:
                 description = (
                     "OAK IMU detected sustained vibration above threshold "
                     f"({vibration:.2f} m/s^2)."
                 )
-            snapshot["alerts"] = [
-                {
-                    "severity": "emergency",
-                    "title": "Earthquake detected",
-                    "description": description,
-                }
-            ]
-            snapshot["evacuation"] = {
+            alert = {
+                "severity": "emergency",
+                "title": "Earthquake detected",
+                "description": description,
+            }
+            evacuation = {
                 "primaryExitId": self.exit_identity["id"],
                 "route": self.exit_identity["name"],
                 "arrow": "←",
@@ -116,6 +146,17 @@ class DashboardStatusStore:
                 ),
                 "label": f"Use {self.exit_identity['name']}",
             }
+            if audio_url is not None:
+                alert["audioUrl"] = audio_url
+                evacuation["audioUrl"] = audio_url
+            if audio_sequence:
+                alert["audioSequence"] = audio_sequence
+                evacuation["audioSequence"] = audio_sequence
+            if audio_pause_ms is not None:
+                alert["audioPauseMs"] = audio_pause_ms
+                evacuation["audioPauseMs"] = audio_pause_ms
+            snapshot["alerts"] = [alert]
+            snapshot["evacuation"] = evacuation
 
         return snapshot
 

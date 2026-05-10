@@ -19,6 +19,22 @@ DEFAULT_EARTHQUAKE_SAMPLE_RATE_HZ = 400
 DEFAULT_EARTHQUAKE_BATCH_THRESHOLD = 20
 DEFAULT_EARTHQUAKE_THRESHOLD_MPS2 = 0.98
 DEFAULT_EARTHQUAKE_MIN_DURATION_S = 0.05
+DEFAULT_AUDIO_ENABLED = False
+DEFAULT_AUDIO_OUTPUT_DIR = "generated_audio"
+DEFAULT_AUDIO_ALARM_PATH = "assets/alarm.mp3"
+DEFAULT_AUDIO_REPEAT_COUNT = 3
+DEFAULT_AUDIO_PAUSE_MS = 650
+DEFAULT_AUDIO_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"
+DEFAULT_AUDIO_MODEL_ID = "eleven_multilingual_v2"
+DEFAULT_AUDIO_OUTPUT_FORMAT = "mp3_44100_128"
+DEFAULT_AUDIO_STABILITY = 0.35
+DEFAULT_AUDIO_SIMILARITY_BOOST = 0.8
+DEFAULT_AUDIO_STYLE = 0.6
+DEFAULT_AUDIO_SPEED = 1.05
+DEFAULT_AUDIO_USE_SPEAKER_BOOST = True
+DEFAULT_EARTHQUAKE_AUDIO_MESSAGE = (
+    "Attention. {event} detected. Evacuate immediately from {exit_name}."
+)
 
 
 @dataclass(frozen=True)
@@ -129,6 +145,24 @@ class EarthquakeConfig:
 
 
 @dataclass(frozen=True)
+class AudioConfig:
+    enabled: bool
+    output_dir: str
+    alarm_path: str
+    repeat_count: int
+    pause_ms: int
+    voice_id: str
+    model_id: str
+    output_format: str
+    stability: float
+    similarity_boost: float
+    style: float
+    speed: float
+    use_speaker_boost: bool
+    earthquake_message_template: str
+
+
+@dataclass(frozen=True)
 class AppConfig:
     device: DeviceConfig
     sign_detection: SignDetectionConfig
@@ -136,6 +170,7 @@ class AppConfig:
     output: OutputConfig
     dashboard: DashboardConfig
     earthquake: EarthquakeConfig
+    audio: AudioConfig
 
 
 def load_config(path: str | Path) -> AppConfig:
@@ -150,6 +185,9 @@ def load_config(path: str | Path) -> AppConfig:
     dashboard = raw.get("dashboard", {})
     dashboard_room = dashboard.get("room", {})
     earthquake = raw.get("earthquake", {})
+    audio = raw.get("audio", {})
+    audio_messages = audio.get("messages", {})
+    voice_settings = audio.get("voice_settings", {})
     stereo_size = sign_detection.get("stereo_size", DEFAULT_FRAME_SIZE)
 
     config = AppConfig(
@@ -239,6 +277,36 @@ def load_config(path: str | Path) -> AppConfig:
                 )
             ),
         ),
+        audio=AudioConfig(
+            enabled=bool(audio.get("enabled", DEFAULT_AUDIO_ENABLED)),
+            output_dir=str(audio.get("output_dir", DEFAULT_AUDIO_OUTPUT_DIR)),
+            alarm_path=str(audio.get("alarm_path", DEFAULT_AUDIO_ALARM_PATH)),
+            repeat_count=int(audio.get("repeat_count", DEFAULT_AUDIO_REPEAT_COUNT)),
+            pause_ms=int(audio.get("pause_ms", DEFAULT_AUDIO_PAUSE_MS)),
+            voice_id=str(audio.get("voice_id", DEFAULT_AUDIO_VOICE_ID)),
+            model_id=str(audio.get("model_id", DEFAULT_AUDIO_MODEL_ID)),
+            output_format=str(
+                audio.get("output_format", DEFAULT_AUDIO_OUTPUT_FORMAT)
+            ),
+            stability=float(
+                voice_settings.get("stability", DEFAULT_AUDIO_STABILITY)
+            ),
+            similarity_boost=float(
+                voice_settings.get(
+                    "similarity_boost", DEFAULT_AUDIO_SIMILARITY_BOOST
+                )
+            ),
+            style=float(voice_settings.get("style", DEFAULT_AUDIO_STYLE)),
+            speed=float(voice_settings.get("speed", DEFAULT_AUDIO_SPEED)),
+            use_speaker_boost=bool(
+                voice_settings.get(
+                    "use_speaker_boost", DEFAULT_AUDIO_USE_SPEAKER_BOOST
+                )
+            ),
+            earthquake_message_template=str(
+                audio_messages.get("earthquake", DEFAULT_EARTHQUAKE_AUDIO_MESSAGE)
+            ),
+        ),
     )
     validate_config(config)
     return config
@@ -326,6 +394,30 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("earthquake.threshold_mps2 must be positive")
     if earthquake.min_duration_s < 0.0:
         raise ValueError("earthquake.min_duration_s must be non-negative")
+
+    audio = config.audio
+    if not audio.output_dir.strip():
+        raise ValueError("audio.output_dir must not be empty")
+    if audio.repeat_count < 1:
+        raise ValueError("audio.repeat_count must be at least 1")
+    if audio.pause_ms < 0:
+        raise ValueError("audio.pause_ms must be non-negative")
+    if not audio.model_id.strip():
+        raise ValueError("audio.model_id must not be empty")
+    if not audio.output_format.strip():
+        raise ValueError("audio.output_format must not be empty")
+    if not 0.0 <= audio.stability <= 1.0:
+        raise ValueError("audio.voice_settings.stability must be between 0 and 1")
+    if not 0.0 <= audio.similarity_boost <= 1.0:
+        raise ValueError(
+            "audio.voice_settings.similarity_boost must be between 0 and 1"
+        )
+    if not 0.0 <= audio.style <= 1.0:
+        raise ValueError("audio.voice_settings.style must be between 0 and 1")
+    if not 0.7 <= audio.speed <= 1.2:
+        raise ValueError("audio.voice_settings.speed must be between 0.7 and 1.2")
+    if not audio.earthquake_message_template.strip():
+        raise ValueError("audio.messages.earthquake must not be empty")
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:

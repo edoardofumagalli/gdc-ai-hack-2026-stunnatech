@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 
 from exitclear_minimal.api import ApiServer
+from exitclear_minimal.audio import EmergencyAudioService
 from exitclear_minimal.baseline import BaselineBuilder
 from exitclear_minimal.config import load_config
 from exitclear_minimal.events import EventWriter
@@ -82,7 +83,13 @@ def main() -> int:
     state_machine = OccupancyStateMachine(config.monitoring)
     event_writer = EventWriter(events_path, config, volume)
     status_store = DashboardStatusStore(config, anchor_label)
-    api_server = ApiServer(status_store, host=args.api_host, port=args.api_port)
+    audio_service = EmergencyAudioService(config.audio, config_root)
+    api_server = ApiServer(
+        status_store,
+        host=args.api_host,
+        port=args.api_port,
+        audio_dir=audio_service.output_dir if audio_service.enabled else None,
+    )
     api_server.start()
     print(f"Status API available at {api_server.url}")
 
@@ -108,6 +115,17 @@ def main() -> int:
                 )
                 if newly_triggered:
                     vibration = packet.earthquake_vibration_mps2
+                    audio_service.request_earthquake_audio(
+                        event_label="earthquake",
+                        exit_id=status_store.exit_identity["id"],
+                        exit_name=status_store.exit_identity["name"],
+                        public_url_for_filename=api_server.audio_url,
+                        on_ready=lambda audio: status_store.set_earthquake_audio(
+                            audio_url=audio.audio_url,
+                            audio_sequence=audio.sequence_urls,
+                            audio_pause_ms=audio.pause_ms,
+                        ),
+                    )
                     if vibration is None:
                         print("\nEarthquake detected: evacuation triggered.")
                     else:

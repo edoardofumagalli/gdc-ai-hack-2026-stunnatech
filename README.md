@@ -16,6 +16,15 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+For ElevenLabs emergency audio, set the API key in the shell before running.
+To compose alarm + repeated voice into a single MP3, install `ffmpeg` too:
+
+```bash
+export ELEVENLABS_API_KEY="your-key"
+# macOS, if needed:
+brew install ffmpeg
+```
+
 ## Run
 
 Put the sign detection model archive next to `config.yaml` or update `sign_detection.model_path`, connect the OAK 4 D, then run:
@@ -67,6 +76,14 @@ Key fields:
 - `earthquake.enabled`: enables IMU-based earthquake detection.
 - `earthquake.threshold_mps2`: vibration threshold in m/s^2 after subtracting gravity.
 - `earthquake.min_duration_s`: sustained vibration time before evacuation is triggered.
+- `audio.enabled`: enables emergency audio generation through ElevenLabs.
+- `audio.output_dir`: folder where generated MP3 files are cached.
+- `audio.alarm_path`: optional local alarm MP3 to prepend before each voice message. Put your demo alarm at `assets/alarm.mp3` or update this path. If missing, a simple fallback alarm WAV is generated.
+- `audio.repeat_count`: number of alarm/voice repetitions in the final emergency MP3.
+- `audio.pause_ms`: silence between repeated emergency messages.
+- `audio.voice_id`: ElevenLabs voice ID.
+- `audio.voice_settings`: ElevenLabs voice settings used to make the announcement more urgent.
+- `audio.messages.earthquake`: template for the earthquake evacuation message.
 
 Console status, event writing, and live preview are enabled by default. They can still be overridden with `output.print_status`, `output.write_events_jsonl`, and `output.live_view` if needed, but they are intentionally left out of the default YAML.
 
@@ -119,12 +136,22 @@ The preview uses one OpenCV window only. `show_occupied_mask` controls whether o
 
 The exit identity is derived from the detected sign label. For the current `emergency` label, the API returns `id: emergency_1`, `name: Emergency Exit 1`, and `type: emergency`.
 
+Generated emergency audio is served from:
+
+```text
+GET /audio/<filename>.mp3
+```
+
 State mapping:
 
 - `NO_BASELINE` and `CLEAR` -> dashboard `state: safe`, exit `status: CLEAR`.
 - `OCCUPIED_PENDING` -> dashboard `state: caution`, exit `status: OCCUPIED_PENDING`.
 - `TRIGGERED` -> dashboard `state: danger`, exit `status: TRIGGERED`.
 - IMU earthquake trigger -> dashboard `state: emergency`, with an evacuation payload. This is latched until the backend is restarted.
+
+When audio is enabled and `ELEVENLABS_API_KEY` is available, the earthquake trigger generates one cached voice MP3 with ElevenLabs, then composes a final emergency MP3 from the optional alarm sound plus the repeated voice message. The final `audioUrl` is added to both `alerts[0]` and `evacuation`.
+
+If `assets/alarm.mp3` is missing, the backend generates `generated_audio/default_alarm.wav`. If `ffmpeg` is missing, the API also returns `audioSequence`, allowing the frontend to play alarm and voice clips in order without a pre-composed MP3.
 
 Example:
 
@@ -171,7 +198,17 @@ An earthquake evacuation response keeps the exit status visible and adds an aler
     {
       "severity": "emergency",
       "title": "Earthquake detected",
-      "description": "OAK IMU detected sustained vibration above threshold (1.12 m/s^2)."
+      "description": "OAK IMU detected sustained vibration above threshold (1.12 m/s^2).",
+      "audioUrl": "http://localhost:8000/audio/earthquake_emergency_1_voice.mp3",
+      "audioSequence": [
+        "http://localhost:8000/audio/default_alarm.wav",
+        "http://localhost:8000/audio/earthquake_emergency_1_voice.mp3",
+        "http://localhost:8000/audio/default_alarm.wav",
+        "http://localhost:8000/audio/earthquake_emergency_1_voice.mp3",
+        "http://localhost:8000/audio/default_alarm.wav",
+        "http://localhost:8000/audio/earthquake_emergency_1_voice.mp3"
+      ],
+      "audioPauseMs": 650
     }
   ],
   "exits": [
@@ -189,7 +226,17 @@ An earthquake evacuation response keeps the exit status visible and adds an aler
     "route": "Emergency Exit 1",
     "arrow": "←",
     "startedAt": "2026-05-10T02:30:00.000+02:00",
-    "label": "Use Emergency Exit 1"
+    "label": "Use Emergency Exit 1",
+    "audioUrl": "http://localhost:8000/audio/earthquake_emergency_1_voice.mp3",
+    "audioSequence": [
+      "http://localhost:8000/audio/default_alarm.wav",
+      "http://localhost:8000/audio/earthquake_emergency_1_voice.mp3",
+      "http://localhost:8000/audio/default_alarm.wav",
+      "http://localhost:8000/audio/earthquake_emergency_1_voice.mp3",
+      "http://localhost:8000/audio/default_alarm.wav",
+      "http://localhost:8000/audio/earthquake_emergency_1_voice.mp3"
+    ],
+    "audioPauseMs": 650
   },
   "updatedAt": "2026-05-10T02:30:00.000+02:00"
 }

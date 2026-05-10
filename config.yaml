@@ -35,3 +35,23 @@ earthquake:
   batch_threshold: 20
   threshold_mps2: 0.98
   min_duration_s: 0.05
+
+audio:
+  enabled: true
+  output_dir: generated_audio
+  alarm_path: assets/alarm.mp3
+  repeat_count: 3
+  pause_ms: 650
+  voice_id: JBFqnCBsd6RMkjVDRZzb
+  model_id: eleven_multilingual_v2
+  output_format: mp3_44100_128
+
+  voice_settings:
+    stability: 0.35
+    similarity_boost: 0.8
+    style: 0.6
+    speed: 1.05
+    use_speaker_boost: true
+
+  messages:
+    earthquake: "Attention. {event} detected. Evacuate immediately from {exit_name}."
